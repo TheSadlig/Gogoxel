@@ -68,23 +68,33 @@ func (r *Renderer) allocateCommandBuffers() error {
 }
 
 func (r *Renderer) createSyncObjects() error {
-	imageAvailableSemaphore, err := vkbridge.CreateSemaphore(r.device)
-	if err != nil {
-		return fmt.Errorf("creating image-available semaphore: %w", err)
-	}
-	r.imageAvailableSemaphore = imageAvailableSemaphore
+	r.imageAvailableSemaphores = make([]vk.Semaphore, maxFramesInFlight)
+	r.inFlightFences = make([]vk.Fence, maxFramesInFlight)
+	r.renderFinishedSemaphores = make([]vk.Semaphore, len(r.swapchainImages))
+	r.imagesInFlight = make([]vk.Fence, len(r.swapchainImages))
+	r.currentFrame = 0
 
-	renderFinishedSemaphore, err := vkbridge.CreateSemaphore(r.device)
-	if err != nil {
-		return fmt.Errorf("creating render-finished semaphore: %w", err)
-	}
-	r.renderFinishedSemaphore = renderFinishedSemaphore
+	for index := range r.imageAvailableSemaphores {
+		semaphore, err := vkbridge.CreateSemaphore(r.device)
+		if err != nil {
+			return fmt.Errorf("creating image-available semaphore %d: %w", index, err)
+		}
+		r.imageAvailableSemaphores[index] = semaphore
 
-	inFlightFence, err := vkbridge.CreateFence(r.device, vk.FenceCreateFlags(vk.FenceCreateSignaledBit))
-	if err != nil {
-		return fmt.Errorf("creating in-flight fence: %w", err)
+		fence, err := vkbridge.CreateFence(r.device, vk.FenceCreateFlags(vk.FenceCreateSignaledBit))
+		if err != nil {
+			return fmt.Errorf("creating in-flight fence %d: %w", index, err)
+		}
+		r.inFlightFences[index] = fence
 	}
-	r.inFlightFence = inFlightFence
+
+	for index := range r.renderFinishedSemaphores {
+		semaphore, err := vkbridge.CreateSemaphore(r.device)
+		if err != nil {
+			return fmt.Errorf("creating render-finished semaphore %d: %w", index, err)
+		}
+		r.renderFinishedSemaphores[index] = semaphore
+	}
 
 	return nil
 }
@@ -94,29 +104,39 @@ func (r *Renderer) DrawFrame(record func(*Frame) error) error {
 		return errors.New("draw callback is required")
 	}
 
-	fences := []vk.Fence{r.inFlightFence}
+	currentFrame := r.currentFrame
+	fences := []vk.Fence{r.inFlightFences[currentFrame]}
 	if err := vk.Error(vk.WaitForFences(r.device, 1, fences, vk.True, math.MaxUint64)); err != nil {
 		return fmt.Errorf("waiting for in-flight fence: %w", err)
-	}
-	if err := vk.Error(vk.ResetFences(r.device, 1, fences)); err != nil {
-		return fmt.Errorf("resetting in-flight fence: %w", err)
 	}
 
 	var imageIndex uint32
 	var nullFence vk.Fence
-	acquireResult := vk.AcquireNextImage(r.device, r.swapchain, math.MaxUint64, r.imageAvailableSemaphore, nullFence, &imageIndex)
+	acquireResult := vk.AcquireNextImage(r.device, r.swapchain, math.MaxUint64, r.imageAvailableSemaphores[currentFrame], nullFence, &imageIndex)
 	if acquireResult != vk.Success && acquireResult != vk.Suboptimal {
 		return fmt.Errorf("acquiring next swapchain image: %w", vk.Error(acquireResult))
+	}
+
+	if imageFence := r.imagesInFlight[imageIndex]; !isZeroValue(imageFence) {
+		imageFences := []vk.Fence{imageFence}
+		if err := vk.Error(vk.WaitForFences(r.device, 1, imageFences, vk.True, math.MaxUint64)); err != nil {
+			return fmt.Errorf("waiting for swapchain image %d fence: %w", imageIndex, err)
+		}
+	}
+	r.imagesInFlight[imageIndex] = r.inFlightFences[currentFrame]
+
+	if err := vk.Error(vk.ResetFences(r.device, 1, fences)); err != nil {
+		return fmt.Errorf("resetting in-flight fence: %w", err)
 	}
 
 	if err := r.recordCommandBuffer(imageIndex, record); err != nil {
 		return err
 	}
 
-	waitSemaphores := []vk.Semaphore{r.imageAvailableSemaphore}
+	waitSemaphores := []vk.Semaphore{r.imageAvailableSemaphores[currentFrame]}
 	waitStages := []vk.PipelineStageFlags{vk.PipelineStageFlags(vk.PipelineStageColorAttachmentOutputBit)}
 	commandBuffers := []vk.CommandBuffer{r.commandBuffers[imageIndex]}
-	signalSemaphores := []vk.Semaphore{r.renderFinishedSemaphore}
+	signalSemaphores := []vk.Semaphore{r.renderFinishedSemaphores[imageIndex]}
 	submitInfo := []vk.SubmitInfo{{
 		SType:                vk.StructureTypeSubmitInfo,
 		WaitSemaphoreCount:   1,
@@ -128,7 +148,7 @@ func (r *Renderer) DrawFrame(record func(*Frame) error) error {
 		PSignalSemaphores:    signalSemaphores,
 	}}
 
-	if err := vk.Error(vk.QueueSubmit(r.graphicsQueue, 1, submitInfo, r.inFlightFence)); err != nil {
+	if err := vk.Error(vk.QueueSubmit(r.graphicsQueue, 1, submitInfo, r.inFlightFences[currentFrame])); err != nil {
 		return fmt.Errorf("submitting draw command: %w", err)
 	}
 
@@ -147,6 +167,8 @@ func (r *Renderer) DrawFrame(record func(*Frame) error) error {
 	if presentResult != vk.Success && presentResult != vk.Suboptimal {
 		return fmt.Errorf("presenting frame: %w", vk.Error(presentResult))
 	}
+
+	r.currentFrame = (r.currentFrame + 1) % len(r.inFlightFences)
 
 	return nil
 }

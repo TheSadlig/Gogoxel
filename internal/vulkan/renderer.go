@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"runtime"
+	"strings"
 
 	"Gogoxel/internal/platform"
 	"Gogoxel/internal/vulkan/vkbridge"
@@ -14,6 +15,7 @@ import (
 const (
 	DefaultWindowWidth  = 1920
 	DefaultWindowHeight = 1080
+	maxFramesInFlight   = 2
 )
 
 func init() {
@@ -45,9 +47,11 @@ type Renderer struct {
 	commandPool    vk.CommandPool
 	commandBuffers []vk.CommandBuffer
 
-	imageAvailableSemaphore vk.Semaphore
-	renderFinishedSemaphore vk.Semaphore
-	inFlightFence           vk.Fence
+	imageAvailableSemaphores []vk.Semaphore
+	renderFinishedSemaphores []vk.Semaphore
+	inFlightFences          []vk.Fence
+	imagesInFlight          []vk.Fence
+	currentFrame            int
 
 	instanceExtensions []string
 }
@@ -175,6 +179,7 @@ func (r *Renderer) pickPhysicalDevice() error {
 		r.physicalDevice = device
 		r.graphicsQueueIndex = indices.graphics
 		r.presentQueueIndex = indices.present
+		fmt.Printf("[vulkan] physical device: %s\n", physicalDeviceName(device))
 		return nil
 	}
 
@@ -210,8 +215,12 @@ func (r *Renderer) createSwapchain() error {
 	}
 
 	surfaceFormat := chooseSurfaceFormat(support.formats)
-	presentMode := choosePresentMode(support.presentModes)
+	presentMode, err := choosePresentMode(support.presentModes)
+	if err != nil {
+		return err
+	}
 	extent := r.chooseExtent(support.capabilities)
+	fmt.Printf("[vulkan] present mode: %s (available: %s)\n", presentModeName(presentMode), strings.Join(presentModeNames(support.presentModes), ", "))
 
 	imageCount := support.capabilities.MinImageCount + 1
 	if support.capabilities.MaxImageCount > 0 && imageCount > support.capabilities.MaxImageCount {
@@ -351,14 +360,20 @@ func (r *Renderer) cleanupVulkan() {
 		_ = vk.Error(vk.DeviceWaitIdle(r.device))
 	}
 
-	if !isZeroValue(r.imageAvailableSemaphore) {
-		vk.DestroySemaphore(r.device, r.imageAvailableSemaphore, nil)
+	for _, semaphore := range r.imageAvailableSemaphores {
+		if !isZeroValue(semaphore) {
+			vk.DestroySemaphore(r.device, semaphore, nil)
+		}
 	}
-	if !isZeroValue(r.renderFinishedSemaphore) {
-		vk.DestroySemaphore(r.device, r.renderFinishedSemaphore, nil)
+	for _, semaphore := range r.renderFinishedSemaphores {
+		if !isZeroValue(semaphore) {
+			vk.DestroySemaphore(r.device, semaphore, nil)
+		}
 	}
-	if !isZeroValue(r.inFlightFence) {
-		vk.DestroyFence(r.device, r.inFlightFence, nil)
+	for _, fence := range r.inFlightFences {
+		if !isZeroValue(fence) {
+			vk.DestroyFence(r.device, fence, nil)
+		}
 	}
 	if !isZeroValue(r.commandPool) {
 		vk.DestroyCommandPool(r.device, r.commandPool, nil)
