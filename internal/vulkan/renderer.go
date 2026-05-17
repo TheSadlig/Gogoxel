@@ -6,15 +6,15 @@ import (
 	"runtime"
 	"unsafe"
 
+	"Gogoxel/internal/platform"
 	"Gogoxel/internal/vulkan/shaders"
 
-	"github.com/go-gl/glfw/v3.3/glfw"
 	vk "github.com/vulkan-go/vulkan"
 )
 
 const (
-	DefaultWindowWidth  = 960
-	DefaultWindowHeight = 540
+	DefaultWindowWidth  = 1920
+	DefaultWindowHeight = 1080
 )
 
 func init() {
@@ -22,7 +22,7 @@ func init() {
 }
 
 type Renderer struct {
-	window *glfw.Window
+	window *platform.Window
 
 	instance       vk.Instance
 	surface        vk.Surface
@@ -53,55 +53,29 @@ type Renderer struct {
 	inFlightFence           vk.Fence
 
 	instanceExtensions []string
-	RenderingInfo      *RenderingInfo
-}
-type RenderingInfo struct {
-	CameraPosition [3]float32
 }
 
-func New(title string, width, height int) (*Renderer, error) {
-	renderer := &Renderer{
-		RenderingInfo: &RenderingInfo{},
+func New(window *platform.Window) (*Renderer, error) {
+	if window == nil {
+		return nil, errors.New("renderer requires a window")
 	}
-	if err := renderer.initWindow(title, width, height); err != nil {
-		return nil, err
+
+	renderer := &Renderer{window: window}
+	renderer.instanceExtensions = window.RequiredInstanceExtensions()
+	if len(renderer.instanceExtensions) == 0 {
+		return nil, errors.New("GLFW did not provide required Vulkan instance extensions")
 	}
 
 	if err := renderer.initVulkan(); err != nil {
 		renderer.cleanupVulkan()
-		renderer.destroyWindow()
 		return nil, err
 	}
 
 	return renderer, nil
 }
 
-// IsKeyPressed returns true if the specified key is currently held down
-func (r *Renderer) IsKeyPressed(key glfw.Key) bool {
-	return r.window.GetKey(key) == glfw.Press
-}
-
 func (r *Renderer) Close() {
 	r.cleanupVulkan()
-	r.destroyWindow()
-}
-
-func (r *Renderer) ShouldClose() bool {
-	return r.window == nil || r.window.ShouldClose()
-}
-
-func (r *Renderer) PollEvents() {
-	glfw.PollEvents()
-}
-
-func (r *Renderer) SetTitle(title string) {
-	if r.window != nil {
-		r.window.SetTitle(title)
-	}
-}
-
-func (r *Renderer) IsIconified() bool {
-	return r.window != nil && r.window.GetAttrib(glfw.Iconified) == 1
 }
 
 func (r *Renderer) WaitIdle() error {
@@ -111,40 +85,6 @@ func (r *Renderer) WaitIdle() error {
 	if err := vk.Error(vk.DeviceWaitIdle(r.device)); err != nil {
 		return fmt.Errorf("waiting for device idle: %w", err)
 	}
-	return nil
-}
-
-func (r *Renderer) initWindow(title string, width, height int) error {
-	if err := glfw.Init(); err != nil {
-		return fmt.Errorf("initializing GLFW: %w", err)
-	}
-	if !glfw.VulkanSupported() {
-		return errors.New("GLFW reports no Vulkan support on this machine")
-	}
-
-	procAddr := glfw.GetVulkanGetInstanceProcAddress()
-	if procAddr == nil {
-		return errors.New("GLFW returned a nil Vulkan proc address")
-	}
-	vk.SetGetInstanceProcAddr(procAddr)
-	if err := vk.Init(); err != nil {
-		return fmt.Errorf("initializing Vulkan loader: %w", err)
-	}
-
-	glfw.WindowHint(glfw.ClientAPI, glfw.NoAPI)
-	glfw.WindowHint(glfw.Resizable, glfw.False)
-
-	window, err := glfw.CreateWindow(width, height, title, nil, nil)
-	if err != nil {
-		return fmt.Errorf("creating window: %w", err)
-	}
-
-	r.window = window
-	r.instanceExtensions = window.GetRequiredInstanceExtensions()
-	if len(r.instanceExtensions) == 0 {
-		return errors.New("GLFW did not provide required Vulkan instance extensions")
-	}
-
 	return nil
 }
 
@@ -214,11 +154,11 @@ func (r *Renderer) createInstance() error {
 }
 
 func (r *Renderer) createSurface() error {
-	surfacePtr, err := r.window.CreateWindowSurface(r.instance, nil)
+	surface, err := r.window.CreateSurface(r.instance)
 	if err != nil {
-		return fmt.Errorf("creating window surface: %w", err)
+		return err
 	}
-	r.surface = vk.SurfaceFromPointer(surfacePtr)
+	r.surface = surface
 	return nil
 }
 
@@ -434,15 +374,20 @@ func (r *Renderer) createRenderPass() error {
 }
 
 type CameraPushConstant struct {
-	CameraPos [4]float32 // X, Y, Z coordinates (last float is padding to align to 16 bytes)
+	CameraPos [4]float32
+	Forward   [4]float32
+	Right     [4]float32
+	Up        [4]float32
+	Aspect    float32
+	FovScale  float32
 }
 
 func (r *Renderer) createGraphicsPipeline() error {
 	// Define the range of the push constant block
 	pushConstantRange := vk.PushConstantRange{
-		StageFlags: vk.ShaderStageFlags(vk.ShaderStageFragmentBit), // Targets the fragment shader
+		StageFlags: vk.ShaderStageFlags(vk.ShaderStageVertexBit | vk.ShaderStageFragmentBit), // Vertex + Fragment
 		Offset:     0,
-		Size:       uint32(unsafe.Sizeof(CameraPushConstant{})), // Exactly 12 bytes
+		Size:       uint32(unsafe.Sizeof(CameraPushConstant{})),
 	}
 
 	if err := vk.Error(vk.CreatePipelineLayout(r.device, &vk.PipelineLayoutCreateInfo{
@@ -614,13 +559,6 @@ func (r *Renderer) createCommandPool() error {
 		return fmt.Errorf("creating command pool: %w", err)
 	}
 	return nil
-}
-
-func (r *Renderer) destroyWindow() {
-	if r.window != nil {
-		r.window.Destroy()
-	}
-	glfw.Terminate()
 }
 
 func (r *Renderer) cleanupVulkan() {

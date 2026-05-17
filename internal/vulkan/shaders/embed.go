@@ -9,8 +9,6 @@ var (
 	//go:embed raytracer.vert.spv
 	RaytracerVertexSPV []byte
 
-	//go:embed shader.vert.spv
-	VertexSPV []byte
-	//go:embed shader.frag.spv
-	FragmentSPV []byte
+	//go:embed chunktotex.comp.spv
+	ChunkToTex []byte
 )

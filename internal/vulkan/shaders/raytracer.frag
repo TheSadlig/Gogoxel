@@ -1,11 +1,16 @@
 #version 450
 
 layout(location = 0) in vec2 uv;
-layout(location = 1) in vec3 cameraPos;
+layout(push_constant) uniform CameraBlock {
+    vec4 pos;
+    vec4 forward;
+    vec4 right;
+    vec4 up;
+    float aspect;
+    float fovScale;
+} camera;
 
 layout(location = 0) out vec4 outColor;
-
-const int steps = 16;
 
 const int NX = 9;
 const int NY = 9;
@@ -113,7 +118,26 @@ int voxelAt(ivec3 p) {
     return voxels[idx];
 }
 
+bool intersectSceneBounds(vec3 ro, vec3 rd, out float tEnter) {
+  vec3 boxMin = vec3(0.0);
+  vec3 boxMax = vec3(float(NX), float(NY), float(NZ));
+    vec3 invDir = sign(rd) / max(abs(rd), vec3(1e-6));
+  vec3 t0 = (boxMin - ro) * invDir;
+  vec3 t1 = (boxMax - ro) * invDir;
+  vec3 tMin = min(t0, t1);
+  vec3 tMax = max(t0, t1);
+  float nearHit = max(max(tMin.x, tMin.y), tMin.z);
+  float farHit = min(min(tMax.x, tMax.y), tMax.z);
+  if (farHit < 0.0 || nearHit > farHit) return false;
+  tEnter = max(nearHit, 0.0);
+  return true;
+}
+
 vec4 raymarchVoxels(vec3 ro, vec3 rd) {
+    float tEnter;
+    if (!intersectSceneBounds(ro, rd, tEnter)) return vec4(0.0);
+    ro += rd * (tEnter + 0.001);
+    
     // Current voxel coordinate
     ivec3 mapPos = ivec3(floor(ro));
     
@@ -201,11 +225,10 @@ vec4 raymarchVoxels(vec3 ro, vec3 rd) {
     return vec4(0.0); // Sky color (miss)
 }
 
-void main () {    
-    vec3 camForward = vec3(0.0, 0.0, -1.0); 
-    vec3 camRight   = vec3(1.0, 0.0,  0.0);
-    vec3 camUp      = vec3(0.0, 1.0,  0.0);
-    
-    vec3 rayDir = normalize(camForward + camRight * uv.x + camUp * uv.y);
-    outColor = raymarchVoxels(cameraPos, rayDir);
+void main() {
+    vec2 screen = uv * 2.0 - 1.0;                    // center coords [-1..1]
+    screen.x *= camera.aspect;                       // aspect correction (width/height)
+    screen *= camera.fovScale;                       // focal length (= tan(fov/2))
+    vec3 rayDir = normalize(camera.forward.xyz + camera.right.xyz * screen.x + camera.up.xyz * screen.y);
+    outColor = raymarchVoxels(camera.pos.xyz, rayDir);
 }

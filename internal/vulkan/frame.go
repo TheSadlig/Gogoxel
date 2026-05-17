@@ -1,6 +1,7 @@
 package vulkan
 
 import (
+	"Gogoxel/internal/platform"
 	"fmt"
 	"math"
 	"unsafe"
@@ -58,7 +59,7 @@ func (r *Renderer) createSyncObjects() error {
 	return nil
 }
 
-func (r *Renderer) DrawFrame(record func(*Frame) error) error {
+func (r *Renderer) DrawFrame(camera platform.Camera, record func(*Frame) error) error {
 	fences := []vk.Fence{r.inFlightFence}
 	if err := vk.Error(vk.WaitForFences(r.device, 1, fences, vk.True, math.MaxUint64)); err != nil {
 		return fmt.Errorf("waiting for in-flight fence: %w", err)
@@ -74,7 +75,20 @@ func (r *Renderer) DrawFrame(record func(*Frame) error) error {
 		return fmt.Errorf("acquiring next swapchain image: %w", vk.Error(acquireResult))
 	}
 
-	if err := r.recordCommandBuffer(imageIndex, record); err != nil {
+	forward := camera.Forward()
+	right := camera.Right()
+	up := camera.Up()
+	aspect := float32(r.swapchainExtent.Width) / float32(r.swapchainExtent.Height)
+	pushConstants := CameraPushConstant{
+		CameraPos: [4]float32{camera.Position[0], camera.Position[1], camera.Position[2], 0},
+		Forward:   [4]float32{forward[0], forward[1], forward[2], 0},
+		Right:     [4]float32{right[0], right[1], right[2], 0},
+		Up:        [4]float32{up[0], up[1], up[2], 0},
+		Aspect:    aspect,
+		FovScale:  float32(math.Tan(float64(camera.FovDeg) * 0.5 * math.Pi / 180.0)),
+	}
+
+	if err := r.recordCommandBuffer(imageIndex, pushConstants, record); err != nil {
 		return err
 	}
 
@@ -116,7 +130,7 @@ func (r *Renderer) DrawFrame(record func(*Frame) error) error {
 	return nil
 }
 
-func (r *Renderer) recordCommandBuffer(imageIndex uint32, record func(*Frame) error) error {
+func (r *Renderer) recordCommandBuffer(imageIndex uint32, pushConstants CameraPushConstant, record func(*Frame) error) error {
 	commandBuffer := r.commandBuffers[imageIndex]
 	if err := vk.Error(vk.ResetCommandBuffer(commandBuffer, 0)); err != nil {
 		return fmt.Errorf("resetting command buffer %d: %w", imageIndex, err)
@@ -128,19 +142,14 @@ func (r *Renderer) recordCommandBuffer(imageIndex uint32, record func(*Frame) er
 	if err := vk.Error(vk.BeginCommandBuffer(commandBuffer, &beginInfo)); err != nil {
 		return fmt.Errorf("beginning command buffer %d: %w", imageIndex, err)
 	}
-
-	pushData := CameraPushConstant{
-		CameraPos: [4]float32{r.RenderingInfo.CameraPosition[0], r.RenderingInfo.CameraPosition[1], r.RenderingInfo.CameraPosition[2], 0},
-	}
-
 	// 3. Record the Push Constant assignment into the active Command Buffer
 	vk.CmdPushConstants(
 		commandBuffer,
 		r.pipelineLayout, // The layout initialized in Step 2
-		vk.ShaderStageFlags(vk.ShaderStageFragmentBit), // Target stage matches exactly
-		0,                               // Offset
-		uint32(unsafe.Sizeof(pushData)), // Total byte size (16)
-		unsafe.Pointer(&pushData),       // Native pointer to Go data slice
+		vk.ShaderStageFlags(vk.ShaderStageVertexBit|vk.ShaderStageFragmentBit), // Vertex + Fragment
+		0,                                    // Offset
+		uint32(unsafe.Sizeof(pushConstants)), // Total byte size
+		unsafe.Pointer(&pushConstants),       // Native pointer to Go data slice
 	)
 
 	renderPassInfo := vk.RenderPassBeginInfo{

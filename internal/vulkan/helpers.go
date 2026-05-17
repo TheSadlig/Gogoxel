@@ -99,7 +99,7 @@ func (r *Renderer) chooseExtent(capabilities vk.SurfaceCapabilities) vk.Extent2D
 		return capabilities.CurrentExtent
 	}
 
-	width, height := r.window.GetFramebufferSize()
+	width, height := r.window.FramebufferSize()
 	extent := vk.Extent2D{
 		Width:  clampUint32(uint32(width), capabilities.MinImageExtent.Width, capabilities.MaxImageExtent.Width),
 		Height: clampUint32(uint32(height), capabilities.MinImageExtent.Height, capabilities.MaxImageExtent.Height),
