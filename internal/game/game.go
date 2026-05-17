@@ -3,6 +3,7 @@ package game
 import (
 	"fmt"
 	"math"
+	rand "math/rand/v2"
 	"time"
 
 	"Gogoxel/internal/input"
@@ -41,6 +42,10 @@ type Game struct {
 	fpsElapsed time.Duration
 	lastFPS    float64
 	camera     platform.Camera
+	chunk      *vulkan.ChunkResources
+	bindings   *vulkan.ChunkBindings
+	chunkToTex *vulkan.ChunkToTexPipeline
+	raytracer  *vulkan.RaytracerPipeline
 }
 
 func New() *Game {
@@ -53,6 +58,43 @@ func New() *Game {
 			FovDeg:   60,
 		},
 	}
+}
+
+func (g *Game) InitChunk() error {
+	if g.renderer == nil {
+		return fmt.Errorf("renderer is not initialized")
+	}
+	if g.bindings == nil {
+		return fmt.Errorf("chunk bindings are not initialized")
+	}
+	if g.chunkToTex == nil {
+		return fmt.Errorf("chunktotex pipeline is not initialized")
+	}
+
+	if g.chunk != nil {
+		g.chunk.Close()
+		g.chunk = nil
+	}
+
+	const chunkSize = uint32(16)
+	data := make([]uint32, chunkSize*chunkSize*chunkSize)
+	rng := rand.New(rand.NewPCG(1, 2))
+	for index := range data {
+		data[index] = rng.Uint32() & 0xff
+	}
+
+	chunk, err := g.renderer.CreateChunkResourcesFromData(g.bindings, data, chunkSize, chunkSize, chunkSize)
+	if err != nil {
+		return err
+	}
+
+	if err := g.chunkToTex.DispatchOnce(g.renderer, chunk); err != nil {
+		chunk.Close()
+		return err
+	}
+
+	g.chunk = chunk
+	return nil
 }
 
 func (g *Game) Run() error {
@@ -68,8 +110,33 @@ func (g *Game) Run() error {
 	}
 	defer renderer.Close()
 
+	bindings, err := renderer.NewChunkBindings()
+	if err != nil {
+		return err
+	}
+	defer bindings.Close()
+
+	chunkToTex, err := renderer.NewChunkToTexPipeline(bindings)
+	if err != nil {
+		return err
+	}
+	defer chunkToTex.Close()
+
+	raytracer, err := renderer.NewRaytracerPipeline(bindings)
+	if err != nil {
+		return err
+	}
+	defer raytracer.Close()
+
 	g.window = window
 	g.renderer = renderer
+	g.bindings = bindings
+	g.chunkToTex = chunkToTex
+	g.raytracer = raytracer
+	if err := g.InitChunk(); err != nil {
+		return err
+	}
+	defer g.chunk.Close()
 	g.updateWindowTitle()
 	lastFrame := time.Now()
 
@@ -87,7 +154,7 @@ func (g *Game) Run() error {
 		if err := g.Update(delta); err != nil {
 			return err
 		}
-		if err := renderer.DrawFrame(g.camera, g.Render); err != nil {
+		if err := renderer.DrawFrame(g.Render); err != nil {
 			return err
 		}
 		g.recordFrame(delta)
@@ -202,9 +269,14 @@ func (g *Game) updateWindowTitle() {
 }
 
 func (g *Game) Render(frame *vulkan.Frame) error {
-	frame.BindDefaultPipeline()
-	frame.Draw(3, 1, 0, 0)
-	return nil
+	if g.raytracer == nil {
+		return fmt.Errorf("raytracer pipeline is not initialized")
+	}
+	if g.chunk == nil {
+		return fmt.Errorf("chunk resources are not initialized")
+	}
+
+	return g.raytracer.Record(frame, g.camera, g.chunk.DescriptorSet)
 }
 
 func defaultBindings() map[input.Action]input.Binding {

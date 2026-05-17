@@ -126,14 +126,16 @@ func choosePresentMode(presentModes []vk.PresentMode) vk.PresentMode {
 	return vk.PresentModeFifo
 }
 
-func createShaderModule(device vk.Device, code []byte) (vk.ShaderModule, error) {
+func CreateShaderModule(device vk.Device, code []byte) (vk.ShaderModule, error) {
 	var shaderModule vk.ShaderModule
 	createInfo := vk.ShaderModuleCreateInfo{
 		SType:    vk.StructureTypeShaderModuleCreateInfo,
 		CodeSize: uint(len(code)),
 		PCode:    repackUint32(code),
 	}
-	if err := vk.Error(vk.CreateShaderModule(device, &createInfo, nil, &shaderModule)); err != nil {
+	if err := withPinnedValue(&shaderModule, func() error {
+		return vk.Error(vk.CreateShaderModule(device, &createInfo, nil, &shaderModule))
+	}); err != nil {
 		return shaderModule, err
 	}
 	return shaderModule, nil
@@ -155,6 +157,21 @@ func clampUint32(value, minValue, maxValue uint32) uint32 {
 		return maxValue
 	}
 	return value
+}
+
+func findMemoryTypeIndex(memoryProperties vk.PhysicalDeviceMemoryProperties, typeBits uint32, required vk.MemoryPropertyFlags) (uint32, error) {
+	for index := uint32(0); index < memoryProperties.MemoryTypeCount; index++ {
+		memoryProperties.MemoryTypes[index].Deref()
+		memoryType := memoryProperties.MemoryTypes[index]
+		if typeBits&(1<<index) == 0 {
+			continue
+		}
+		if memoryType.PropertyFlags&required == required {
+			return index, nil
+		}
+	}
+
+	return 0, fmt.Errorf("no compatible Vulkan memory type for flags %#x", required)
 }
 
 func isZeroValue[T comparable](value T) bool {

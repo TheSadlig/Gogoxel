@@ -1,14 +1,18 @@
 package shaders
 
-import _ "embed"
+import (
+	_ "embed"
+)
+
+type Shader = []byte
 
 var (
 	//go:embed raytracer.frag.spv
-	RaytracerSPV []byte
+	RaytracerSPV Shader
 
 	//go:embed raytracer.vert.spv
-	RaytracerVertexSPV []byte
+	RaytracerVertexSPV Shader
 
 	//go:embed chunktotex.comp.spv
-	ChunkToTex []byte
+	ChunkToTex Shader
 )
