@@ -1,31 +1,27 @@
 #version 450
 
-// Process texels in 4x4x4 3D local workgroups
 layout(local_size_x = 4, local_size_y = 4, local_size_z = 4) in;
 
-// 1. The input flat data array from Go (SSBO)
 layout(std430, binding = 0) readonly buffer InputData {
     uint data[];
 } src;
 
-// 2. The target 3D image we want to fill
-layout(r32ui, binding = 1) writeonly uniform uimage3D targetImage;
+layout(r8ui, binding = 1) writeonly uniform uimage3D targetImage;
 
 void main() {
     ivec3 texelCoord = ivec3(gl_GlobalInvocationID.xyz);
     ivec3 size = imageSize(targetImage);
 
-    // Ensure we do not index out of bounds of the 3D texture size
     if (texelCoord.x >= size.x || texelCoord.y >= size.y || texelCoord.z >= size.z) {
         return;
     }
 
-    // Convert 3D coordinates into a flat 1D index to read from the array
-    uint flatIndex = texelCoord.z * (size.x * size.y) + texelCoord.y * size.x + texelCoord.x;
+    uint totalVoxelIndex = texelCoord.z * (size.x * size.y) + texelCoord.y * size.x + texelCoord.x;
 
-    // Read from the Go-provided array
-    uint val = src.data[flatIndex];
-
-    // Write directly into the 3D storage image
-    imageStore(targetImage, texelCoord, uvec4(val, 0, 0, 0));
+    uint packedVoxelCount = (uint(size.x) * uint(size.y) * uint(size.z) + 3u) / 4u;
+    uint arrayIndex = totalVoxelIndex / 4u;
+    uint byteOffset = totalVoxelIndex % 4u;
+    uint packedFourVoxels = src.data[arrayIndex];
+    uint voxelID = (packedFourVoxels >> (byteOffset * 8)) & 0xFFu;
+    imageStore(targetImage, texelCoord, uvec4(voxelID, 0u, 0u, 0u));
 }

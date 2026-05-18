@@ -9,6 +9,21 @@ type perlinGenerator struct {
 	perm [512]int
 }
 
+const (
+	perlinDeepVoxel  uint8 = 1
+	perlinRockVoxel  uint8 = 2
+	perlinSoilVoxel  uint8 = 3
+	perlinGrassVoxel uint8 = 4
+)
+
+var perlinPalette = [255]uint32{
+	0,
+	rgbaColor(0x39, 0x31, 0x2A),
+	rgbaColor(0x5D, 0x60, 0x66),
+	rgbaColor(0x78, 0x57, 0x39),
+	rgbaColor(0x5D, 0x8C, 0x41),
+}
+
 func NewPerlinGenerator(seed1, seed2 uint64) *perlinGenerator {
 	values := make([]int, 256)
 	for i := range values {
@@ -26,11 +41,11 @@ func NewPerlinGenerator(seed1, seed2 uint64) *perlinGenerator {
 	return g
 }
 
-func (p *perlinGenerator) Generate(width, height, depth uint32) []uint32 {
+func (p *perlinGenerator) Generate(width, height, depth uint32) ([]uint8, [255]uint32) {
 	total := int(width * height * depth)
-	data := make([]uint32, total)
+	data := make([]uint8, total)
 	if width == 0 || height == 0 || depth == 0 {
-		return data
+		return data, perlinPalette
 	}
 
 	baseNoise := p
@@ -71,14 +86,14 @@ func (p *perlinGenerator) Generate(width, height, depth uint32) []uint32 {
 			columnOffset := y*width + x
 			for z := uint32(0); z <= uint32(surface) && z < depth; z++ {
 				depthFromSurface := surface - int(z)
-				voxel := uint32(116)
+				voxel := perlinDeepVoxel
 				switch {
 				case depthFromSurface == 0:
-					voxel = 244
+					voxel = perlinGrassVoxel
 				case depthFromSurface < 4:
-					voxel = 198
+					voxel = perlinSoilVoxel
 				case depthFromSurface < 18:
-					voxel = 154
+					voxel = perlinRockVoxel
 				}
 
 				nz := float64(z) / depthF
@@ -93,7 +108,7 @@ func (p *perlinGenerator) Generate(width, height, depth uint32) []uint32 {
 		}
 	}
 
-	return data
+	return data, perlinPalette
 }
 
 // ----- noise helpers (adapted from previous implementation) -----

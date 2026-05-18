@@ -26,7 +26,7 @@ func (b *ChunkBindings) init() error {
 			Binding:         0,
 			DescriptorType:  vk.DescriptorTypeStorageBuffer,
 			DescriptorCount: 1,
-			StageFlags:      vk.ShaderStageFlags(vk.ShaderStageComputeBit),
+			StageFlags:      vk.ShaderStageFlags(vk.ShaderStageComputeBit | vk.ShaderStageFragmentBit),
 		},
 		{
 			Binding:         1,

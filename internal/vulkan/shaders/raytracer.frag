@@ -14,13 +14,27 @@ layout(location = 0) out vec4 outColor;
 
 const int NX = 1000;
 const int NY = 1000;
-const int NZ = 50;
+const int NZ = 1000;
 const int N = NX * NY * NZ;
+const uint PACKED_VOXEL_COUNT = uint((N + 3) / 4);
 
-layout(set = 0, binding = 1, r32ui) uniform readonly uimage3D chunkImage;
+layout(std430, set = 0, binding = 0) readonly buffer InputData {
+    uint data[];
+} src;
 
-int voxelAt(ivec3 p) {
-    return int(imageLoad(chunkImage, p).r);
+layout(set = 0, binding = 1, r8ui) uniform readonly uimage3D chunkImage;
+
+uint voxelAt(ivec3 p) {
+    return imageLoad(chunkImage, p).r;
+}
+
+vec4 colorForVoxel(uint voxelID) {
+    if (voxelID == 0u) {
+        return vec4(0.0);
+    }
+
+    uint packedColor = src.data[PACKED_VOXEL_COUNT + min(voxelID, 254u)];
+    return unpackUnorm4x8(packedColor);
 }
 
 bool intersectSceneBounds(vec3 ro, vec3 rd, out float tEnter) {
@@ -80,20 +94,18 @@ vec4 raymarchVoxels(vec3 ro, vec3 rd) {
 
     // Main Traversal Loop
     const int MAX_STEPS = 10000; 
-    int hitVoxelType = 0;
+    uint hitVoxelType = 0u;
     vec3 normal = vec3(0.0);
 
     for (int i = 0; i < MAX_STEPS; i++) {
         // Read the voxel array at the current location
-        int idx = mapPos.x + (mapPos.y * NX) + (mapPos.z * NX * NY);
-        
         // Out of bounds break
         if (mapPos.x < 0 || mapPos.x >= NX || 
             mapPos.y < 0 || mapPos.y >= NY || 
             mapPos.z < 0 || mapPos.z >= NZ) break;
             
-        int voxel = voxelAt(mapPos);
-        if (voxel > 0) {
+        uint voxel = voxelAt(mapPos);
+        if (voxel > 0u) {
             hitVoxelType = voxel;
             break; // Found solid voxel!
         }
@@ -123,9 +135,10 @@ vec4 raymarchVoxels(vec3 ro, vec3 rd) {
     }
 
     // Shading based on hit voxel type and normal
-    if (hitVoxelType > 0) {
+    if (hitVoxelType > 0u) {
         float lighting = dot(normal, normalize(vec3(0.5, 1.0, 0.3))) * 0.5 + 0.5;
-        return vec4(vec3(0.2, 0.6, 1.0) * lighting, 1.0); // Output voxel color
+        vec4 pxl = colorForVoxel(hitVoxelType);
+        return vec4(pxl.rgb * lighting, pxl.a);
     }
     
     return vec4(0.0); // Sky color (miss)

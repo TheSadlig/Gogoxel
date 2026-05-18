@@ -21,7 +21,7 @@ const moveCooldown = 120 * time.Millisecond
 const (
 	chunkWidth  = uint32(1000)
 	chunkHeight = uint32(1000)
-	chunkDepth  = uint32(50)
+	chunkDepth  = uint32(1000)
 )
 
 const (
@@ -85,9 +85,9 @@ func (g *Game) InitChunk() error {
 	}
 
 	gen := generators.NewDefault()
-	data := gen.Generate(chunkWidth, chunkHeight, chunkDepth)
+	data, palette := gen.Generate(chunkWidth, chunkHeight, chunkDepth)
 
-	chunk, err := g.renderer.CreateChunkResourcesFromData(g.bindings, data, chunkWidth, chunkHeight, chunkDepth)
+	chunk, err := g.renderer.CreateChunkResourcesFromData(g.bindings, data, palette, chunkWidth, chunkHeight, chunkDepth)
 	if err != nil {
 		return err
 	}
@@ -187,8 +187,8 @@ func (g *Game) Update(delta time.Duration) error {
 	}
 	right := g.camera.Right()
 	if g.input.Down(actionFaster) {
-		moveStep *= 4
-		turnStep *= 1.5
+		moveStep *= 10
+		turnStep *= 2
 	}
 
 	if g.input.Down(actionMoveForward) {
@@ -264,7 +264,7 @@ func (g *Game) recordFrame(delta time.Duration) {
 }
 
 func (g *Game) updateWindowTitle() {
-	if g.renderer == nil {
+	if g.window == nil {
 		return
 	}
 
@@ -272,8 +272,28 @@ func (g *Game) updateWindowTitle() {
 	if g.lastFPS > 0 {
 		title = fmt.Sprintf("%s | %.1f FPS", windowTitle, g.lastFPS)
 	}
+	if g.chunk != nil {
+		title = fmt.Sprintf("%s | RAM %s | VRAM %s", title, formatBytes(g.chunk.RAMBytes()), formatBytes(g.chunk.VRAMBytes()))
+	}
 
 	g.window.SetTitle(title)
+}
+
+func formatBytes(bytes uint64) string {
+	const unit = 1024
+	if bytes < unit {
+		return fmt.Sprintf("%d B", bytes)
+	}
+	divisor := float64(unit)
+	suffix := "KiB"
+	for _, next := range []string{"MiB", "GiB", "TiB"} {
+		if float64(bytes) < divisor*unit {
+			break
+		}
+		divisor *= unit
+		suffix = next
+	}
+	return fmt.Sprintf("%.1f %s", float64(bytes)/divisor, suffix)
 }
 
 func (g *Game) Render(frame *vulkan.Frame) error {

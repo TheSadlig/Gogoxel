@@ -86,7 +86,7 @@ func (p *RaytracerPipeline) init(renderPass vk.RenderPass, swapchainExtent vk.Ex
 	attributes := []vk.VertexInputAttributeDescription{{
 		Location: 0,
 		Binding:  0,
-		Format:   vk.FormatR32g32Sfloat,
+		Format:   vk.FormatR8g8b8a8Unorm,
 		Offset:   0,
 	}}
 	bindingDescriptions := []vk.VertexInputBindingDescription{{
