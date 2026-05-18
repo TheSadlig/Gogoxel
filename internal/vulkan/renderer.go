@@ -49,9 +49,9 @@ type Renderer struct {
 
 	imageAvailableSemaphores []vk.Semaphore
 	renderFinishedSemaphores []vk.Semaphore
-	inFlightFences          []vk.Fence
-	imagesInFlight          []vk.Fence
-	currentFrame            int
+	inFlightFences           []vk.Fence
+	imagesInFlight           []vk.Fence
+	currentFrame             int
 
 	instanceExtensions []string
 }

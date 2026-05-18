@@ -44,11 +44,11 @@ func (p *RaytracerPipeline) init(renderPass vk.RenderPass, swapchainExtent vk.Ex
 
 	if err := withPinnedValue(&p.layout, func() error {
 		return vk.Error(vk.CreatePipelineLayout(device, &vk.PipelineLayoutCreateInfo{
-		SType:                  vk.StructureTypePipelineLayoutCreateInfo,
-		PushConstantRangeCount: 1,
-		PPushConstantRanges:    []vk.PushConstantRange{pushConstantRange},
-		SetLayoutCount:         1,
-		PSetLayouts:            []vk.DescriptorSetLayout{chunkDescriptorLayout},
+			SType:                  vk.StructureTypePipelineLayoutCreateInfo,
+			PushConstantRangeCount: 1,
+			PPushConstantRanges:    []vk.PushConstantRange{pushConstantRange},
+			SetLayoutCount:         1,
+			PSetLayouts:            []vk.DescriptorSetLayout{chunkDescriptorLayout},
 		}, nil, &p.layout))
 	}); err != nil {
 		return fmt.Errorf("creating graphics pipeline layout: %w", err)
