@@ -18,6 +18,7 @@ type ChunkResources struct {
 	buffer         vk.Buffer
 	bufferMemory   vk.DeviceMemory
 	bufferBytes    vk.DeviceSize
+	brickPool      *brickPool
 }
 
 func (r *Renderer) CreateChunkResourcesFromData(chunkBindings *ChunkBindings, data []uint8, palette [255]uint32, width, height, depth uint32) (*ChunkResources, error) {
@@ -41,6 +42,10 @@ func (r *Renderer) CreateChunkResourcesFromData(chunkBindings *ChunkBindings, da
 	}
 
 	if err := r.createChunkStorageBuffer(chunk, data, palette); err != nil {
+		chunk.Close()
+		return nil, err
+	}
+	if err := r.createChunkBrickPool(chunk); err != nil {
 		chunk.Close()
 		return nil, err
 	}
@@ -70,6 +75,10 @@ func (r *Renderer) CreateChunkResourcesFromSVO(chunkBindings *ChunkBindings, svo
 		chunk.Close()
 		return nil, err
 	}
+	if err := r.createChunkBrickPool(chunk); err != nil {
+		chunk.Close()
+		return nil, err
+	}
 	if err := r.createChunkDescriptorSet(chunkBindings, chunk); err != nil {
 		chunk.Close()
 		return nil, err
@@ -80,6 +89,19 @@ func (r *Renderer) CreateChunkResourcesFromSVO(chunkBindings *ChunkBindings, svo
 
 func (r *Renderer) createChunkStorageBuffer(chunk *ChunkResources, data []uint8, palette [255]uint32) error {
 	return r.createChunkStorageBufferWords(chunk, packChunkData(data, palette))
+}
+
+func (r *Renderer) createChunkBrickPool(chunk *ChunkResources) error {
+	if chunk == nil {
+		return errors.New("chunk resources are required")
+	}
+
+	pool, err := r.createBrickPool()
+	if err != nil {
+		return err
+	}
+	chunk.brickPool = pool
+	return nil
 }
 
 func (r *Renderer) createChunkStorageBufferWords(chunk *ChunkResources, words []uint32) error {
@@ -211,8 +233,16 @@ func packChunkData(data []uint8, palette [255]uint32) []uint32 {
 }
 
 func (r *Renderer) createChunkDescriptorSet(chunkBindings *ChunkBindings, chunk *ChunkResources) error {
+	if chunk == nil {
+		return errors.New("chunk resources are required")
+	}
+	if chunk.brickPool == nil {
+		return errors.New("brick pool is required")
+	}
+
 	poolSizes := []vk.DescriptorPoolSize{
 		{Type: vk.DescriptorTypeStorageBuffer, DescriptorCount: 1},
+		{Type: vk.DescriptorTypeCombinedImageSampler, DescriptorCount: 1},
 	}
 	poolCreateInfo := vk.DescriptorPoolCreateInfo{
 		SType:         vk.StructureTypeDescriptorPoolCreateInfo,
@@ -244,6 +274,11 @@ func (r *Renderer) createChunkDescriptorSet(chunkBindings *ChunkBindings, chunk 
 		Offset: 0,
 		Range:  chunk.bufferBytes,
 	}}
+	imageInfos := []vk.DescriptorImageInfo{{
+		Sampler:     chunk.brickPool.sampler,
+		ImageView:   chunk.brickPool.imageView,
+		ImageLayout: vk.ImageLayoutShaderReadOnlyOptimal,
+	}}
 	writeDescriptorSets := []vk.WriteDescriptorSet{
 		{
 			SType:           vk.StructureTypeWriteDescriptorSet,
@@ -252,6 +287,14 @@ func (r *Renderer) createChunkDescriptorSet(chunkBindings *ChunkBindings, chunk 
 			DescriptorCount: 1,
 			DescriptorType:  vk.DescriptorTypeStorageBuffer,
 			PBufferInfo:     bufferInfos,
+		},
+		{
+			SType:           vk.StructureTypeWriteDescriptorSet,
+			DstSet:          chunk.DescriptorSet,
+			DstBinding:      1,
+			DescriptorCount: 1,
+			DescriptorType:  vk.DescriptorTypeCombinedImageSampler,
+			PImageInfo:      imageInfos,
 		},
 	}
 	vk.UpdateDescriptorSets(r.device, uint32(len(writeDescriptorSets)), writeDescriptorSets, 0, nil)
@@ -363,6 +406,9 @@ func (chunk *ChunkResources) Close() {
 	if !isZeroValue(chunk.bufferMemory) {
 		vk.FreeMemory(chunk.device, chunk.bufferMemory, nil)
 	}
+	if chunk.brickPool != nil {
+		chunk.brickPool.Close(chunk.device)
+	}
 
 	*chunk = ChunkResources{}
 }
@@ -371,5 +417,9 @@ func (chunk *ChunkResources) GPUBytes() uint64 {
 	if chunk == nil {
 		return 0
 	}
-	return uint64(chunk.bufferBytes)
+	brickPoolBytes := uint64(0)
+	if chunk.brickPool != nil {
+		brickPoolBytes = chunk.brickPool.GPUBytes()
+	}
+	return uint64(chunk.bufferBytes) + brickPoolBytes
 }

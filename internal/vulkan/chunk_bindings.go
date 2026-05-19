@@ -28,6 +28,12 @@ func (b *ChunkBindings) init() error {
 			DescriptorCount: 1,
 			StageFlags:      vk.ShaderStageFlags(vk.ShaderStageComputeBit | vk.ShaderStageFragmentBit),
 		},
+		{
+			Binding:         1,
+			DescriptorType:  vk.DescriptorTypeCombinedImageSampler,
+			DescriptorCount: 1,
+			StageFlags:      vk.ShaderStageFlags(vk.ShaderStageFragmentBit),
+		},
 	}
 
 	createInfo := vk.DescriptorSetLayoutCreateInfo{
