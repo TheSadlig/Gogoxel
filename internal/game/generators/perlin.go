@@ -8,11 +8,13 @@ import (
 	"Gogoxel/internal/world"
 )
 
-const perlinSceneSize uint = 120
+const perlinSceneSize uint = 320
 
 type perlinGenerator struct {
 	name      string
 	sceneSize uint
+	seed1     uint64
+	seed2     uint64
 	perm      [512]int
 	cache     *cachedSVO
 }
@@ -22,14 +24,40 @@ const (
 	perlinRockVoxel  uint8 = 2
 	perlinSoilVoxel  uint8 = 3
 	perlinGrassVoxel uint8 = 4
+	perlinSandVoxel  uint8 = 5
+	perlinSnowVoxel  uint8 = 6
+	perlinCliffVoxel uint8 = 7
+	perlinWaterVoxel uint8 = 8
 )
 
 var perlinPalette = [255]uint32{
 	0,
-	rgbaColor(0x39, 0x31, 0x2A),
-	rgbaColor(0x5D, 0x60, 0x66),
-	rgbaColor(0x78, 0x57, 0x39),
-	rgbaColor(0x5D, 0x8C, 0x41),
+	rgbaColor(0x24, 0x20, 0x1D),
+	rgbaColor(0x60, 0x67, 0x6F),
+	rgbaColor(0x74, 0x59, 0x40),
+	rgbaColor(0x5A, 0x88, 0x47),
+	rgbaColor(0xC9, 0xB5, 0x82),
+	rgbaColor(0xEE, 0xF2, 0xF5),
+	rgbaColor(0x7B, 0x83, 0x89),
+	rgbaColor(0x4B, 0x7F, 0xB4),
+}
+
+type terrainColumn struct {
+	surface    int
+	seaLevel   int
+	moisture   float64
+	ruggedness float64
+	shoreline  float64
+	snowLine   int
+}
+
+type perlinNoiseLayers struct {
+	continent *perlinGenerator
+	warp      *perlinGenerator
+	ridge     *perlinGenerator
+	erosion   *perlinGenerator
+	biome     *perlinGenerator
+	cave      *perlinGenerator
 }
 
 func NewPerlinGenerator(seed1, seed2 uint64) *perlinGenerator {
@@ -44,11 +72,26 @@ func NewPerlinGenerator(seed1, seed2 uint64) *perlinGenerator {
 		values[index], values[swapIndex] = values[swapIndex], values[index]
 	}
 
-	generator := &perlinGenerator{name: "Perlin Terrain", sceneSize: perlinSceneSize}
+	generator := &perlinGenerator{name: "Perlin Terrain", sceneSize: perlinSceneSize, seed1: seed1, seed2: seed2}
 	for index := range generator.perm {
 		generator.perm[index] = values[index&255]
 	}
 	return generator
+}
+
+func (p *perlinGenerator) variant(seed1Delta, seed2Delta uint64) *perlinGenerator {
+	return NewPerlinGenerator(p.seed1+seed1Delta, p.seed2+seed2Delta)
+}
+
+func (p *perlinGenerator) layers() perlinNoiseLayers {
+	return perlinNoiseLayers{
+		continent: p,
+		warp:      p.variant(0x9E3779B97F4A7C15, 0xBF58476D1CE4E5B9),
+		ridge:     p.variant(0x94D049BB133111EB, 0xD2B74407B1CE6E93),
+		erosion:   p.variant(0xDB4F0B9175AE2165, 0xBBE0563303A4615F),
+		biome:     p.variant(0xA0F2EC75A1FE1575, 0x89E182857D9ED689),
+		cave:      p.variant(0xC2B2AE3D27D4EB4F, 0x165667B19E3779F9),
+	}
 }
 
 func (p *perlinGenerator) Name() string {
@@ -63,60 +106,29 @@ func (p *perlinGenerator) BuildSVO(svo *world.SVO) error {
 		return p.cache.apply(svo)
 	}
 
-	baseNoise := p
-	ridgeNoise := NewPerlinGenerator(3, 4)
-	widthF := float64(p.sceneSize)
-	heightF := float64(p.sceneSize)
-	depthF := float64(p.sceneSize)
-	halfW := widthF * 0.5
-	halfH := heightF * 0.5
-	baseHeight := 0
-	heightScale := depthF * 0.95
-	ridgeScale := depthF * 0.14
-	minSurface := 0
-	maxSurface := int(p.sceneSize) - 1
+	layers := p.layers()
+	sceneScale := float64(p.sceneSize)
 
 	svo.BuildTreeSparseFunc(p.sceneSize, func(add func(x, y, z uint, color uint32)) {
 		for y := uint(0); y < p.sceneSize; y++ {
 			for x := uint(0); x < p.sceneSize; x++ {
-				nx := (float64(x) - halfW) / widthF
-				ny := (float64(y) - halfH) / heightF
+				column := sampleTerrainColumn(float64(x), float64(y), sceneScale, layers.continent, layers.warp, layers.ridge, layers.erosion, layers.biome)
 
-				large := fbm2(baseNoise, nx*1.8, ny*1.8, 6, 2.0, 0.55)
-				fine := fbm2(baseNoise, nx*18.0, ny*18.0, 4, 2.0, 0.5)
-				elevation := math.Pow(large*0.6+fine*0.4, 1.15)
-
-				mountainMask := fbm2(baseNoise, nx*0.55, ny*0.55, 3, 2.0, 0.7)
-				ridgeRaw := fbm2(ridgeNoise, nx*8.0, ny*8.0, 4, 2.0, 0.65)
-				ridge := math.Pow(math.Abs(ridgeRaw*2.0-1.0), 1.1)
-				surface := baseHeight + int(elevation*heightScale) + int(mountainMask*depthF*0.35) - int(ridge*ridgeScale*0.6)
-				if surface < minSurface {
-					surface = minSurface
-				}
-				if surface > maxSurface {
-					surface = maxSurface
-				}
-
-				for z := 0; z <= surface; z++ {
-					depthFromSurface := surface - z
-					voxel := perlinDeepVoxel
-					switch {
-					case depthFromSurface == 0:
-						voxel = perlinGrassVoxel
-					case depthFromSurface < 4:
-						voxel = perlinSoilVoxel
-					case depthFromSurface < 18:
-						voxel = perlinRockVoxel
-					}
-
-					nz := float64(z) / depthF
-					caveNoise := fbm3(baseNoise, nx*6.0, ny*6.0, nz*6.0, 4, 2.0, 0.6)
-					caveRidge := fbm3(ridgeNoise, nx*12.0, ny*12.0, nz*8.0, 3, 2.0, 0.65)
-					if caveNoise > 0.62 && caveRidge > 0.55 {
+				for z := 0; z <= column.surface; z++ {
+					if shouldCarveCave(float64(x), float64(y), float64(z), sceneScale, column, layers.warp, layers.cave) {
+						if z <= column.seaLevel {
+							add(x, y, uint(z), perlinPalette[perlinWaterVoxel])
+						}
 						continue
 					}
 
-					add(x, y, uint(z), perlinPalette[voxel])
+					add(x, y, uint(z), perlinPalette[perlinMaterialAtDepth(z, column)])
+				}
+
+				if column.surface < column.seaLevel {
+					for z := column.surface + 1; z <= column.seaLevel; z++ {
+						add(x, y, uint(z), perlinPalette[perlinWaterVoxel])
+					}
 				}
 			}
 		}
@@ -125,6 +137,153 @@ func (p *perlinGenerator) BuildSVO(svo *world.SVO) error {
 	cache := captureCache(svo)
 	p.cache = &cache
 	return nil
+}
+
+func sampleTerrainColumn(x, y, sceneScale float64, continentNoise, warpNoise, ridgeNoise, erosionNoise, biomeNoise *perlinGenerator) terrainColumn {
+	halfSpan := sceneScale * 0.5
+	nx := (x - halfSpan) / sceneScale
+	ny := (y - halfSpan) / sceneScale
+
+	warpX := fbm2(warpNoise, nx*0.8+17.1, ny*0.8-11.4, 4, 2.0, 0.5) - 0.5
+	warpY := fbm2(warpNoise, nx*0.8-23.7, ny*0.8+9.2, 4, 2.0, 0.5) - 0.5
+	wx := nx + warpX*0.45
+	wy := ny + warpY*0.45
+
+	continentRaw := fbm2(continentNoise, wx*0.95, wy*0.95, 5, 2.0, 0.56)
+	shelf := smoothstep(0.38, 0.55, continentRaw)
+	continent := smoothstep(0.44, 0.61, continentRaw)
+	foothills := fbm2(continentNoise, wx*2.0+3.1, wy*2.0-7.7, 5, 2.05, 0.54)
+	erosion := fbm2(erosionNoise, wx*5.2+12.4, wy*5.2-15.2, 4, 2.1, 0.52)
+	alpineDetail := fbm2(erosionNoise, wx*7.0-18.3, wy*7.0+14.1, 4, 2.2, 0.48)
+	moisture := fbm2(biomeNoise, wx*1.3-4.7, wy*1.3+9.1, 4, 2.0, 0.57)
+
+	ridgeRaw := fbm2(ridgeNoise, wx*3.4, wy*3.4, 5, 2.0, 0.58)
+	ridge := 1.0 - math.Abs(ridgeRaw*2.0-1.0)
+	ridge = math.Pow(clamp01(ridge), 1.4)
+
+	riverField := fbm2(warpNoise, wx*2.6+21.8, wy*2.6-14.6, 4, 2.0, 0.5)
+	riverDistance := math.Abs(riverField*2.0 - 1.0)
+	riverCarve := 1.0 - smoothstep(0.02, 0.18, riverDistance)
+	riverCarve *= shelf * (0.35 + moisture*0.65)
+	trenchField := fbm2(ridgeNoise, wx*1.7-8.4, wy*1.7+12.1, 4, 2.0, 0.55)
+
+	basePlateau := sceneScale * 0.05
+	rollingHills := continent * math.Pow(foothills, 1.15) * sceneScale * 0.09
+	mountainMass := math.Pow(ridge, 1.8) * math.Pow(continent, 1.35) * sceneScale * (0.14 + (1.0-erosion)*0.20)
+	microRelief := continent * alpineDetail * sceneScale * 0.035 * (0.40 + ridge*0.60)
+	basinCut := continent * (1.0-erosion) * (0.50 + (1.0-moisture)*0.50) * sceneScale * 0.03
+
+	seaLevel := perlinSeaLevel(sceneScale)
+	oceanRelief := (foothills-0.5)*sceneScale*0.08 + (alpineDetail-0.5)*sceneScale*0.04
+	trenchCarve := smoothstep(0.63, 0.82, trenchField) * math.Pow(1.0-shelf, 1.8) * sceneScale * 0.11
+	oceanFloor := float64(seaLevel) - sceneScale*0.04 - math.Pow(1.0-shelf, 1.35)*sceneScale*0.10 + oceanRelief*(1.0-continent*0.4) - trenchCarve
+	landHeight := float64(seaLevel) + basePlateau + shelf*sceneScale*0.09 + rollingHills + mountainMass + microRelief - basinCut - riverCarve*sceneScale*0.09
+	surface := int(lerp(oceanFloor, landHeight, shelf))
+
+	minSurface := 2
+	maxSurface := int(sceneScale * 0.88)
+	if surface < minSurface {
+		surface = minSurface
+	}
+	if surface > maxSurface {
+		surface = maxSurface
+	}
+
+	shoreline := 1.0 - smoothstep(0.0, sceneScale*0.03, math.Abs(float64(surface-seaLevel)))
+	snowLine := int(sceneScale*0.56 - moisture*sceneScale*0.03 - (1.0-continent)*sceneScale*0.04)
+	if snowLine < seaLevel+24 {
+		snowLine = seaLevel + 24
+	}
+
+	ruggedness := clamp01(math.Pow(ridge, 1.25)*0.7 + (1.0-erosion)*0.3)
+	return terrainColumn{
+		surface:    surface,
+		seaLevel:   seaLevel,
+		moisture:   moisture,
+		ruggedness: ruggedness,
+		shoreline:  shoreline,
+		snowLine:   snowLine,
+	}
+}
+
+func perlinSeaLevel(sceneScale float64) int {
+	return int(sceneScale * 0.20)
+}
+
+func shouldCarveCave(x, y, z, sceneScale float64, column terrainColumn, warpNoise, caveNoise *perlinGenerator) bool {
+	depthFromSurface := column.surface - int(z)
+	if depthFromSurface < 8 || int(z) < column.seaLevel/3 {
+		return false
+	}
+	if column.ruggedness < 0.35 && depthFromSurface < 20 {
+		return false
+	}
+
+	halfSpan := sceneScale * 0.5
+	nx := (x - halfSpan) / sceneScale
+	ny := (y - halfSpan) / sceneScale
+	nz := z / sceneScale
+
+	warp := fbm2(warpNoise, nx*3.0-7.1, ny*3.0+13.4, 3, 2.0, 0.5) - 0.5
+	caveField := fbm3(caveNoise, nx*5.0+warp*1.5, ny*5.0-warp*1.5, nz*7.0, 4, 2.0, 0.56)
+	chamberField := fbm3(caveNoise, nx*9.0-11.7, ny*9.0+4.3, nz*10.0, 3, 2.0, 0.5)
+	threshold := 0.82 - column.ruggedness*0.10
+	return caveField > threshold && chamberField > 0.58
+}
+
+func perlinMaterialAtDepth(z int, column terrainColumn) uint8 {
+	depthFromSurface := column.surface - z
+	if z <= column.seaLevel {
+		if z <= column.seaLevel-12 {
+			switch {
+			case depthFromSurface == 0 && column.ruggedness > 0.55:
+				return perlinCliffVoxel
+			case depthFromSurface == 0:
+				return perlinDeepVoxel
+			case depthFromSurface < 4:
+				return perlinRockVoxel
+			}
+		}
+		if depthFromSurface == 0 || depthFromSurface < 4 {
+			return perlinSandVoxel
+		}
+	}
+
+	if z >= column.snowLine {
+		if depthFromSurface == 0 {
+			return perlinSnowVoxel
+		}
+		if depthFromSurface < 4 {
+			return perlinRockVoxel
+		}
+	}
+
+	if column.shoreline > 0.45 && z >= column.seaLevel-6 && depthFromSurface < 5 && column.ruggedness < 0.58 {
+		return perlinSandVoxel
+	}
+
+	switch {
+	case depthFromSurface == 0:
+		if column.ruggedness > 0.68 {
+			return perlinCliffVoxel
+		}
+		if column.moisture < 0.28 && z > column.seaLevel+10 {
+			return perlinRockVoxel
+		}
+		return perlinGrassVoxel
+	case depthFromSurface < 4:
+		if column.shoreline > 0.30 && z >= column.seaLevel-4 {
+			return perlinSandVoxel
+		}
+		return perlinSoilVoxel
+	case depthFromSurface < 14:
+		if column.ruggedness > 0.58 {
+			return perlinCliffVoxel
+		}
+		return perlinRockVoxel
+	default:
+		return perlinDeepVoxel
+	}
 }
 
 func fbm2(noise *perlinGenerator, x, y float64, octaves int, lacunarity, gain float64) float64 {
@@ -265,6 +424,27 @@ func grad3(hash int, x, y, z float64) float64 {
 	default:
 		return -y - z
 	}
+}
+
+func clamp01(value float64) float64 {
+	if value < 0 {
+		return 0
+	}
+	if value > 1 {
+		return 1
+	}
+	return value
+}
+
+func smoothstep(edge0, edge1, value float64) float64 {
+	if edge0 == edge1 {
+		if value < edge0 {
+			return 0
+		}
+		return 1
+	}
+	t := clamp01((value - edge0) / (edge1 - edge0))
+	return t * t * (3 - 2*t)
 }
 
 func fade(value float64) float64              { return value * value * value * (value*(value*6-15) + 10) }

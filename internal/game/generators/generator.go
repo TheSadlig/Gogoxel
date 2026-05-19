@@ -36,7 +36,6 @@ func (c cachedSVO) apply(target *world.SVO) error {
 func DefaultGenerators() []Generator {
 	generators := []Generator{
 		NewCubeGenerator("Cube", 128, 64, rgbaColor(0xE2, 0x55, 0x4F)),
-		NewHouseGenerator(defaultHouseScale),
 		NewPerlinGenerator(1, 2),
 	}
 
