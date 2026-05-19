@@ -607,13 +607,17 @@ func (m rsvoModel) toStorageBufferWords(pruneLevel int) []uint32 {
 		totalNodes += int(count)
 	}
 	if totalNodes == 0 {
-		return []uint32{0, 0}
+		words := make([]uint32, 2+world.PaletteSize)
+		copy(words[2:], m.palette[:])
+		return words
 	}
 
 	rootSize := 1 << uint(m.topLevel)
-	words := make([]uint32, 2, 2+totalNodes*2)
+	words := make([]uint32, 2, 2+totalNodes*2+world.PaletteSize)
 	words[0] = uint32(rootSize)
 	m.appendStorageBufferNode(&words, rsvoNode{level: m.topLevel, nodeIndex: 0, minX: 0, minY: 0, minZ: 0, size: rootSize}, pruneLevel)
+	words[1] = uint32((len(words) - 2) / 2)
+	words = append(words, m.palette[:]...)
 	return words
 }
 
@@ -627,7 +631,7 @@ func (m rsvoModel) appendStorageBufferNode(words *[]uint32, node rsvoNode, prune
 func (m rsvoModel) fillStorageBufferNode(words *[]uint32, nodeIndex uint32, node rsvoNode, pruneLevel int) {
 	wordIndex := 2 + nodeIndex*2
 	if node.level <= pruneLevel {
-		(*words)[wordIndex] = packLeafWord(m.palette[1])
+		(*words)[wordIndex] = packLeafWord(1)
 		return
 	}
 
@@ -716,8 +720,8 @@ func mirrorRSVOBitZ(bitIndex int) int {
 	return bitIndex ^ 0x4
 }
 
-func packLeafWord(color uint32) uint32 {
-	return ((color & 0xFFFFFF) << 8) | 1
+func packLeafWord(materialID uint8) uint32 {
+	return uint32(materialID)<<8 | 1
 }
 
 func alignDownUint32(value, alignment uint32) uint32 {

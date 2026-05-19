@@ -19,26 +19,26 @@ func TestBuildTreePreservesDescendantsForSingleVoxel(t *testing.T) {
 	if root.childPointer != 1 {
 		t.Fatalf("root childPointer = %d, want 1", root.childPointer)
 	}
-	if mask := root.childMaskAndColor & 0xFF; mask != 0x80 {
-		t.Fatalf("root child mask = %#x, want %#x", mask, uint32(0x80))
+	if mask := root.childMask(); mask != 0x80 {
+		t.Fatalf("root child mask = %#x, want %#x", mask, uint8(0x80))
 	}
 
 	branch := svo.nodes[1]
 	if branch.childPointer != 2 {
 		t.Fatalf("branch childPointer = %d, want 2", branch.childPointer)
 	}
-	if mask := branch.childMaskAndColor & 0xFF; mask != 0x80 {
-		t.Fatalf("branch child mask = %#x, want %#x", mask, uint32(0x80))
+	if mask := branch.childMask(); mask != 0x80 {
+		t.Fatalf("branch child mask = %#x, want %#x", mask, uint8(0x80))
 	}
 
 	leaf := svo.nodes[2]
-	if leaf.childPointer != 0 {
-		t.Fatalf("leaf childPointer = %d, want 0", leaf.childPointer)
+	if !leaf.isSolidLeaf() {
+		t.Fatalf("leaf = %+v, want solid material leaf", leaf)
 	}
-	if mask := leaf.childMaskAndColor & 0xFF; mask != 0x01 {
-		t.Fatalf("leaf child mask = %#x, want %#x", mask, uint32(0x01))
+	if got, want := leaf.materialID(), uint8(1); got != want {
+		t.Fatalf("leaf material ID = %d, want %d", got, want)
 	}
-	if color := leaf.childMaskAndColor >> 8; color != 0x123456 {
-		t.Fatalf("leaf color = %#x, want %#x", color, uint32(0x123456))
+	if got, want := svo.palette[1], uint32(0x123456); got != want {
+		t.Fatalf("palette[1] = %#x, want %#x", got, want)
 	}
 }

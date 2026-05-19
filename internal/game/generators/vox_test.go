@@ -3,6 +3,8 @@ package generators
 import (
 	"math/bits"
 	"testing"
+
+	"Gogoxel/internal/world"
 )
 
 func TestRSVOStorageWordsStayInBounds(t *testing.T) {
@@ -13,12 +15,19 @@ func TestRSVOStorageWordsStayInBounds(t *testing.T) {
 
 	pruneLevel := generator.model.pruneLevelForNodeBudget(maxRSVONodeBudget)
 	words := generator.model.toStorageBufferWords(pruneLevel)
-	if len(words) < 4 {
+	if len(words) < 2+world.PaletteSize+2 {
 		t.Fatal("toStorageBufferWords(pruneLevel) returned too few words")
 	}
-	nodeCount := (len(words) - 2) / 2
+	nodeCount := int(words[1])
 	if nodeCount > maxRSVONodeBudget {
 		t.Fatalf("nodeCount = %d, want <= %d", nodeCount, maxRSVONodeBudget)
+	}
+	paletteOffset := 2 + nodeCount*2
+	if len(words) != paletteOffset+world.PaletteSize {
+		t.Fatalf("len(words) = %d, want %d", len(words), paletteOffset+world.PaletteSize)
+	}
+	if got, want := words[paletteOffset+1], generator.model.palette[1]; got != want {
+		t.Fatalf("palette word = %#x, want %#x", got, want)
 	}
 
 	for index := 0; index < nodeCount; index++ {

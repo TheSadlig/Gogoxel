@@ -52,6 +52,7 @@ type Renderer struct {
 	inFlightFences           []vk.Fence
 	imagesInFlight           []vk.Fence
 	currentFrame             int
+	frameReleases            [][]func()
 
 	instanceExtensions []string
 }
@@ -361,6 +362,9 @@ func (r *Renderer) cleanupVulkan() {
 	if !isZeroValue(r.device) {
 		_ = vk.Error(vk.DeviceWaitIdle(r.device))
 	}
+	for frameSlot := range r.frameReleases {
+		r.runDeferredReleases(frameSlot)
+	}
 
 	for _, semaphore := range r.imageAvailableSemaphores {
 		if !isZeroValue(semaphore) {
@@ -401,4 +405,21 @@ func (r *Renderer) cleanupVulkan() {
 	if !isZeroValue(r.instance) {
 		vk.DestroyInstance(r.instance, nil)
 	}
+}
+
+func (r *Renderer) deferFrameRelease(frameSlot int, release func()) {
+	if r == nil || release == nil || frameSlot < 0 || frameSlot >= len(r.frameReleases) {
+		return
+	}
+	r.frameReleases[frameSlot] = append(r.frameReleases[frameSlot], release)
+}
+
+func (r *Renderer) runDeferredReleases(frameSlot int) {
+	if r == nil || frameSlot < 0 || frameSlot >= len(r.frameReleases) {
+		return
+	}
+	for _, release := range r.frameReleases[frameSlot] {
+		release()
+	}
+	r.frameReleases[frameSlot] = nil
 }

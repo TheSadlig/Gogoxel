@@ -19,6 +19,7 @@ type ChunkResources struct {
 	bufferMemory   vk.DeviceMemory
 	bufferBytes    vk.DeviceSize
 	brickPool      *brickPool
+	streamer       *brickStreamer
 }
 
 func (r *Renderer) CreateChunkResourcesFromData(chunkBindings *ChunkBindings, data []uint8, palette [255]uint32, width, height, depth uint32) (*ChunkResources, error) {
@@ -83,6 +84,7 @@ func (r *Renderer) CreateChunkResourcesFromSVO(chunkBindings *ChunkBindings, svo
 		chunk.Close()
 		return nil, err
 	}
+	chunk.streamer = newBrickStreamer(svo.Bricks())
 
 	return chunk, nil
 }
@@ -405,6 +407,9 @@ func (chunk *ChunkResources) Close() {
 	}
 	if !isZeroValue(chunk.bufferMemory) {
 		vk.FreeMemory(chunk.device, chunk.bufferMemory, nil)
+	}
+	if chunk.streamer != nil {
+		chunk.streamer.Close()
 	}
 	if chunk.brickPool != nil {
 		chunk.brickPool.Close(chunk.device)

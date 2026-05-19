@@ -15,22 +15,31 @@ layout(push_constant) uniform CameraBlock {
 layout(location = 0) out vec4 outColor;
 
 struct SVONode {
-    uint childMaskAndColor; // Bits 0-7: Child mask // Bit 8-31: color index
-    uint childPointer;      // Index du premier enfant dans le tableau global
+    uint childMaskAndColor;
+    uint childPointer;
 };
 
 layout(std430, binding = 0) readonly buffer SVOBuffer {
     uint svoSize;
-    uint _pad;
-    uint rawNodes[];
+    uint nodeCount;
+    uint rawWords[];
 } svo;
 
+layout(binding = 1) uniform usampler3D brickPoolTexture;
+
 const int MaxStackDepth = 24;
+const int MaxMacroSteps = 500;
+const int MaxBrickSteps = 24;
 const float BoundaryEpsilon = 1e-4;
 
 const uint AXIS_X = 1u;
 const uint AXIS_Y = 2u;
 const uint AXIS_Z = 4u;
+
+const uint BrickLeafFlag = 0x80000000u;
+const uint ChildMaskMask = 0xFFu;
+const uint BrickSize = 8u;
+const uint BrickPoolGridEdge = 64u;
 
 uint resolveFaceAxis(uint axisMask, vec3 rd) {
     float best = -1.0;
@@ -68,9 +77,141 @@ vec3 axisNormal(uint axis, vec3 rd) {
 SVONode getSvoNode(uint index) {
     SVONode node;
     uint baseWord = index * 2u;
-    node.childMaskAndColor = svo.rawNodes[baseWord];
-    node.childPointer = svo.rawNodes[baseWord + 1u];
+    node.childMaskAndColor = svo.rawWords[baseWord];
+    node.childPointer = svo.rawWords[baseWord + 1u];
     return node;
+}
+
+uint nodeChildMask(SVONode node) {
+    return node.childMaskAndColor & ChildMaskMask;
+}
+
+uint nodeMaterialID(SVONode node) {
+    return (node.childMaskAndColor >> 8u) & 0x7FFFFFu;
+}
+
+bool isBrickLeaf(SVONode node) {
+    return (node.childMaskAndColor & BrickLeafFlag) != 0u;
+}
+
+bool isSolidLeaf(SVONode node) {
+    return !isBrickLeaf(node) && node.childPointer == 0u && nodeChildMask(node) == 1u;
+}
+
+uint paletteColorForMaterial(uint materialID) {
+    if (materialID == 0u) {
+        return 0u;
+    }
+    return svo.rawWords[svo.nodeCount * 2u + materialID];
+}
+
+vec4 shadeMaterial(uint materialID, vec3 normal) {
+    uint packedColor = paletteColorForMaterial(materialID);
+    vec4 voxelColor = unpackUnorm4x8(packedColor).abgr;
+    float lighting = dot(normal, normalize(vec3(0.5, 1.0, 0.3))) * 0.5 + 0.5;
+    return vec4(voxelColor.rgb * lighting, 1.0);
+}
+
+uvec3 brickSlotCoord(uint slot) {
+    return uvec3(
+        slot % BrickPoolGridEdge,
+        (slot / BrickPoolGridEdge) % BrickPoolGridEdge,
+        slot / (BrickPoolGridEdge * BrickPoolGridEdge)
+    );
+}
+
+bool raymarchBrick(
+    uint slot,
+    uvec3 brickOriginWorld,
+    vec3 currPosWorld,
+    vec3 rd,
+    uint entryFaceMask,
+    bool hasEntryFaceMask,
+    out uint hitMaterialID,
+    out vec3 hitNormal
+) {
+    if (slot == 0u) {
+        return false;
+    }
+
+    ivec3 brickOriginPool = ivec3(brickSlotCoord(slot) * BrickSize);
+    vec3 localPos = currPosWorld - vec3(brickOriginWorld);
+    localPos = clamp(localPos, vec3(0.0), vec3(float(BrickSize) - 1e-4));
+
+    ivec3 voxel = ivec3(floor(localPos));
+    ivec3 step = ivec3(
+        rd.x > 0.0 ? 1 : (rd.x < 0.0 ? -1 : 0),
+        rd.y > 0.0 ? 1 : (rd.y < 0.0 ? -1 : 0),
+        rd.z > 0.0 ? 1 : (rd.z < 0.0 ? -1 : 0)
+    );
+    vec3 invDir = 1.0 / (rd + sign(rd) * 1e-6);
+    vec3 nextBoundary = vec3(voxel) + vec3(
+        rd.x > 0.0 ? 1.0 : 0.0,
+        rd.y > 0.0 ? 1.0 : 0.0,
+        rd.z > 0.0 ? 1.0 : 0.0
+    );
+    vec3 tMax = (nextBoundary - localPos) * invDir;
+    vec3 tDelta = abs(invDir);
+    if (step.x == 0) {
+        tMax.x = 1.0 / 0.0;
+        tDelta.x = 1.0 / 0.0;
+    }
+    if (step.y == 0) {
+        tMax.y = 1.0 / 0.0;
+        tDelta.y = 1.0 / 0.0;
+    }
+    if (step.z == 0) {
+        tMax.z = 1.0 / 0.0;
+        tDelta.z = 1.0 / 0.0;
+    }
+
+    uint faceMask = entryFaceMask;
+    bool hasFaceMask = hasEntryFaceMask;
+
+    for (int stepIdx = 0; stepIdx < MaxBrickSteps; stepIdx++) {
+        if (any(lessThan(voxel, ivec3(0))) || any(greaterThanEqual(voxel, ivec3(int(BrickSize))))) {
+            return false;
+        }
+
+        uint materialID = texelFetch(brickPoolTexture, brickOriginPool + voxel, 0).r;
+        if (materialID > 0u) {
+            uint hitAxis = hasFaceMask ? resolveFaceAxis(faceMask, rd) : dominantAxis(rd);
+            hitNormal = axisNormal(hitAxis, rd);
+            hitMaterialID = materialID;
+            return true;
+        }
+
+        float nextT = min(tMax.x, min(tMax.y, tMax.z));
+        float axisEpsilon = max(BoundaryEpsilon, abs(nextT) * 1e-6);
+        uint exitMask = 0u;
+        if (abs(tMax.x - nextT) <= axisEpsilon) {
+            exitMask |= AXIS_X;
+        }
+        if (abs(tMax.y - nextT) <= axisEpsilon) {
+            exitMask |= AXIS_Y;
+        }
+        if (abs(tMax.z - nextT) <= axisEpsilon) {
+            exitMask |= AXIS_Z;
+        }
+
+        if ((exitMask & AXIS_X) != 0u) {
+            voxel.x += step.x;
+            tMax.x += tDelta.x;
+        }
+        if ((exitMask & AXIS_Y) != 0u) {
+            voxel.y += step.y;
+            tMax.y += tDelta.y;
+        }
+        if ((exitMask & AXIS_Z) != 0u) {
+            voxel.z += step.z;
+            tMax.z += tDelta.z;
+        }
+
+        faceMask = exitMask != 0u ? exitMask : dominantAxis(rd);
+        hasFaceMask = true;
+    }
+
+    return false;
 }
 
 bool intersectSceneBounds(vec3 ro, vec3 rd, out float tMin, out float tMax, out uint entryAxis, out bool hasEntryFace) {
@@ -120,25 +261,21 @@ vec4 raymarchVoxels(vec3 ro, vec3 rd) {
     uint nodeStack[MaxStackDepth + 1];
     uvec3 posStack[MaxStackDepth + 1];
     uint sizeStack[MaxStackDepth + 1];
-    int sceneDepth = clamp(findMSB(int(max(svo.svoSize, 1u))), 0, MaxStackDepth);
 
     int depth = 0;
     nodeStack[0] = 0u;
     posStack[0]  = uvec3(0u);
     sizeStack[0] = svo.svoSize;
-
-    vec3 hitNormal = vec3(0.0);
-    
-    // Compute starting point inside the bounding volume
     vec3 currPos = ro + rd * t;
 
-    for (int stepIdx = 0; stepIdx < 500; stepIdx++) {
-        if (t >= tMax || depth < 0) break;
+    for (int stepIdx = 0; stepIdx < MaxMacroSteps; stepIdx++) {
+        if (t >= tMax || depth < 0) {
+            break;
+        }
 
         uint currentNodeIdx = nodeStack[depth];
         uvec3 currentOrigin = posStack[depth];
         uint currentSize    = sizeStack[depth];
-        
         currPos = clamp(currPos, vec3(0.0), vec3(float(svo.svoSize) - 1e-4));
 
         uvec3 center = currentOrigin + uvec3(currentSize >> 1u);
@@ -157,78 +294,104 @@ vec4 raymarchVoxels(vec3 ro, vec3 rd) {
         uint octantY = (classifyPos.y >= float(center.y)) ? 2u : 0u;
         uint octantZ = (classifyPos.z >= float(center.z)) ? 4u : 0u;
         uint currentOctant = octantX | octantY | octantZ;
-        
-        SVONode currentNode = getSvoNode(currentNodeIdx);
-        uint childMask = currentNode.childMaskAndColor & 0xFFu;
 
-        if (currentNodeIdx == 0u && childMask == 0u) {
+        SVONode currentNode = getSvoNode(currentNodeIdx);
+        uint childMask = nodeChildMask(currentNode);
+
+        if (currentNodeIdx == 0u && childMask == 0u && currentNode.childPointer == 0u && !isBrickLeaf(currentNode)) {
             return vec4(0.0, 0.0, 0.0, 0.0);
         }
 
-        // HIT CONDITION: Solid terminal leaf found!
-        if (currentNode.childPointer == 0u || depth >= sceneDepth) {
+        if (isBrickLeaf(currentNode)) {
+            uint hitMaterialID = 0u;
+            vec3 hitNormal = vec3(0.0);
+            if (raymarchBrick(currentNode.childPointer, currentOrigin, currPos, rd, faceMask, hasFaceMask, hitMaterialID, hitNormal)) {
+                return shadeMaterial(hitMaterialID, hitNormal);
+            }
+        } else if (isSolidLeaf(currentNode)) {
             uint hitAxis = hasFaceMask ? resolveFaceAxis(faceMask, rd) : dominantAxis(rd);
-            hitNormal = axisNormal(hitAxis, rd);
-
-            uint packedColor = currentNode.childMaskAndColor >> 8u;
-            vec4 voxelColor = unpackUnorm4x8(packedColor).abgr;
-            float lighting = dot(hitNormal, normalize(vec3(0.5, 1.0, 0.3))) * 0.5 + 0.5;
-            return vec4(voxelColor.rgb * lighting, 1.0);
+            return shadeMaterial(nodeMaterialID(currentNode), axisNormal(hitAxis, rd));
         }
 
-        bool hasChild = ((childMask >> currentOctant) & 1u) == 1u;
+        uvec3 advanceOrigin = currentOrigin;
+        uint advanceSize = currentSize;
+        if (!isBrickLeaf(currentNode) && currentNode.childPointer != 0u) {
+            uint halfSize = currentSize >> 1u;
+            bool hasChild = ((childMask >> currentOctant) & 1u) == 1u;
+            if (hasChild) {
+                uint childPtr = currentNode.childPointer;
+                uint maskBefore = childMask & ((1u << currentOctant) - 1u);
+                uint memoryOffset = bitCount(maskBefore);
+                uint nextNodeIdx = childPtr + memoryOffset;
 
-        uint halfSize = currentSize >> 1u;
+                uvec3 childOrigin = currentOrigin + uvec3(
+                    currentOctant & 1u,
+                    (currentOctant >> 1u) & 1u,
+                    (currentOctant >> 2u) & 1u
+                ) * halfSize;
 
-        if (hasChild) {
-            uint childPtr = currentNode.childPointer;
-            uint maskBefore = childMask & ((1u << currentOctant) - 1u);
-            uint memoryOffset = bitCount(maskBefore);
-            uint nextNodeIdx = childPtr + memoryOffset;
+                depth++;
+                nodeStack[depth] = nextNodeIdx;
+                posStack[depth]  = childOrigin;
+                sizeStack[depth] = halfSize;
+                continue;
+            }
 
-            uvec3 childOrigin = currentOrigin + uvec3(
+            advanceOrigin = currentOrigin + uvec3(
                 currentOctant & 1u,
                 (currentOctant >> 1u) & 1u,
                 (currentOctant >> 2u) & 1u
             ) * halfSize;
-
-            depth++;
-            nodeStack[depth] = nextNodeIdx;
-            posStack[depth]  = childOrigin;
-            sizeStack[depth] = halfSize;
-            continue;
+            advanceSize = halfSize;
         }
 
-        uvec3 octantXYZ = uvec3(octantX & 1u, (octantY >> 1u) & 1u, (octantZ >> 2u) & 1u);
-        uvec3 targetOctantCoord = octantXYZ + uvec3(stepDir.x > 0.0 ? 1u : 0u, stepDir.y > 0.0 ? 1u : 0u, stepDir.z > 0.0 ? 1u : 0u);
-        vec3 targetFace = vec3(currentOrigin) + vec3(halfSize) * vec3(targetOctantCoord);
+        vec3 targetFace = vec3(advanceOrigin) + vec3(
+            stepDir.x > 0.0 ? float(advanceSize) : 0.0,
+            stepDir.y > 0.0 ? float(advanceSize) : 0.0,
+            stepDir.z > 0.0 ? float(advanceSize) : 0.0
+        );
 
         vec3 tBounds = (targetFace - currPos) * invDir;
 
-        if (stepDir.x == 0.0) tBounds.x = 1.0 / 0.0;
-        if (stepDir.y == 0.0) tBounds.y = 1.0 / 0.0;
-        if (stepDir.z == 0.0) tBounds.z = 1.0 / 0.0;
+        if (stepDir.x == 0.0) {
+            tBounds.x = 1.0 / 0.0;
+        }
+        if (stepDir.y == 0.0) {
+            tBounds.y = 1.0 / 0.0;
+        }
+        if (stepDir.z == 0.0) {
+            tBounds.z = 1.0 / 0.0;
+        }
 
         uint exitAxis = AXIS_X;
         float tStep = tBounds.x;
 
-        if (tBounds.y < tStep) { tStep = tBounds.y; exitAxis = AXIS_Y; }
-        if (tBounds.z < tStep) { tStep = tBounds.z; exitAxis = AXIS_Z; }
+        if (tBounds.y < tStep) {
+            tStep = tBounds.y;
+            exitAxis = AXIS_Y;
+        }
+        if (tBounds.z < tStep) {
+            tStep = tBounds.z;
+            exitAxis = AXIS_Z;
+        }
 
         float axisEpsilon = max(BoundaryEpsilon, abs(tStep) * 1e-6);
         uint exitMask = 0u;
-        if (abs(tBounds.x - tStep) <= axisEpsilon) { exitMask |= AXIS_X; }
-        if (abs(tBounds.y - tStep) <= axisEpsilon) { exitMask |= AXIS_Y; }
-        if (abs(tBounds.z - tStep) <= axisEpsilon) { exitMask |= AXIS_Z; }
+        if (abs(tBounds.x - tStep) <= axisEpsilon) {
+            exitMask |= AXIS_X;
+        }
+        if (abs(tBounds.y - tStep) <= axisEpsilon) {
+            exitMask |= AXIS_Y;
+        }
+        if (abs(tBounds.z - tStep) <= axisEpsilon) {
+            exitMask |= AXIS_Z;
+        }
 
-        // ADVANCE MECHANIC: Step directly to the exit face edge
         t += tStep;
         currPos += rd * tStep;
         faceMask = exitMask != 0u ? exitMask : exitAxis;
         hasFaceMask = true;
 
-        // Force a physical bit-accurate snap over the crossed plane face
-        // to securely jump into the neighboring voxel area without infinite loop grid-locks
         if ((exitMask & AXIS_X) != 0u) {
             currPos.x = targetFace.x + (stepDir.x * 1e-3);
         }
@@ -239,15 +402,14 @@ vec4 raymarchVoxels(vec3 ro, vec3 rd) {
             currPos.z = targetFace.z + (stepDir.z * 1e-3);
         }
 
-        // POP MECHANIC: Backtrack up the tree hierarchy frames until current snapped position matches parent bounds
         while (depth >= 0) {
             uvec3 pMin = posStack[depth];
             uvec3 pMax = pMin + uvec3(sizeStack[depth]);
-            
+
             if (currPos.x >= float(pMin.x) && currPos.x < float(pMax.x) &&
                 currPos.y >= float(pMin.y) && currPos.y < float(pMax.y) &&
                 currPos.z >= float(pMin.z) && currPos.z < float(pMax.z)) {
-                break; 
+                break;
             }
             depth--;
         }

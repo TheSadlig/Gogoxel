@@ -105,6 +105,7 @@ func (g *Game) InitChunk() error {
 		previousChunk.Close()
 	}
 	g.resetCameraForScene()
+	g.chunk.SetCameraPosition(g.camera.Position)
 	g.updateWindowTitle()
 
 	return nil
@@ -319,6 +320,10 @@ func (g *Game) Render(frame *vulkan.Frame) error {
 	}
 	if g.chunk == nil {
 		return fmt.Errorf("chunk resources are not initialized")
+	}
+	g.chunk.SetCameraPosition(g.camera.Position)
+	if err := g.chunk.RecordStreaming(frame); err != nil {
+		return fmt.Errorf("recording brick streaming uploads: %w", err)
 	}
 
 	var occupiedMin [3]float32
