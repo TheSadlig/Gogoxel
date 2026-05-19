@@ -43,14 +43,16 @@ func TestBuildTreePreservesDescendantsForSingleVoxelDenseTracked(t *testing.T) {
 	}
 }
 
-func TestBuildTreeSparseMatchesDenseSingleVoxel(t *testing.T) {
+func TestBuildTreeSparseFuncMatchesDenseSingleVoxel(t *testing.T) {
 	dense := NewSVO()
 	dense.BuildTree(func(x, y, z int) (uint32, bool) {
 		return 0x123456, x == 3 && y == 3 && z == 3
 	}, 4)
 
 	sparse := NewSVO()
-	sparse.BuildTreeSparse([]VoxelPoint{{X: 3, Y: 3, Z: 3, Color: 0x123456}}, 4)
+	sparse.BuildTreeSparseFunc(4, func(add func(x, y, z uint, color uint32)) {
+		add(3, 3, 3, 0x123456)
+	})
 
 	denseWords := dense.StorageBufferWords()
 	sparseWords := sparse.StorageBufferWords()
@@ -64,13 +66,17 @@ func TestBuildTreeSparseMatchesDenseSingleVoxel(t *testing.T) {
 	}
 }
 
-func TestLoadPackedNodesCopiesState(t *testing.T) {
+func TestLoadStorageBufferWordsCopiesState(t *testing.T) {
 	source := NewSVO()
-	source.BuildTreeSparse([]VoxelPoint{{X: 1, Y: 2, Z: 3, Color: 0x654321}}, 8)
+	source.BuildTreeSparseFunc(8, func(add func(x, y, z uint, color uint32)) {
+		add(1, 2, 3, 0x654321)
+	})
 
 	minBounds, maxBounds, ok := source.OccupiedBounds()
 	clone := NewSVO()
-	clone.LoadPackedNodes(8, source.PackedNodes(), minBounds, maxBounds, ok)
+	if err := clone.LoadStorageBufferWords(source.StorageBufferWords(), minBounds, maxBounds, ok); err != nil {
+		t.Fatalf("LoadStorageBufferWords() error = %v", err)
+	}
 
 	sourceWords := source.StorageBufferWords()
 	cloneWords := clone.StorageBufferWords()

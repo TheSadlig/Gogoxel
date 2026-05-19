@@ -1,7 +1,6 @@
 package generators
 
 import (
-	"fmt"
 	"path/filepath"
 	"strings"
 
@@ -14,8 +13,7 @@ type Generator interface {
 }
 
 type cachedSVO struct {
-	size              uint
-	nodes             []world.PackedNode
+	words             []uint32
 	occupiedMin       [3]uint32
 	occupiedMax       [3]uint32
 	hasOccupiedBounds bool
@@ -24,70 +22,15 @@ type cachedSVO struct {
 func captureCache(svo *world.SVO) cachedSVO {
 	minBounds, maxBounds, ok := svo.OccupiedBounds()
 	return cachedSVO{
-		size:              svo.Size(),
-		nodes:             svo.PackedNodes(),
+		words:             svo.StorageBufferWords(),
 		occupiedMin:       minBounds,
 		occupiedMax:       maxBounds,
 		hasOccupiedBounds: ok,
 	}
 }
 
-func (c cachedSVO) apply(target *world.SVO) {
-	target.LoadPackedNodes(c.size, c.nodes, c.occupiedMin, c.occupiedMax, c.hasOccupiedBounds)
-}
-
-type cubeGenerator struct {
-	name      string
-	sceneSize uint
-	cubeSize  uint
-	color     uint32
-	cache     *cachedSVO
-}
-
-func NewCubeGenerator(name string, sceneSize, cubeSize uint, color uint32) Generator {
-	if name == "" {
-		name = "Cube"
-	}
-	if sceneSize == 0 {
-		sceneSize = 128
-	}
-	if cubeSize == 0 {
-		cubeSize = sceneSize / 2
-	}
-	return &cubeGenerator{name: name, sceneSize: sceneSizeForDimension(int(sceneSize)), cubeSize: cubeSize, color: color}
-}
-
-func (g *cubeGenerator) Name() string {
-	return g.name
-}
-
-func (g *cubeGenerator) BuildSVO(svo *world.SVO) error {
-	if svo == nil {
-		return fmt.Errorf("svo is required")
-	}
-	if g.cache != nil {
-		g.cache.apply(svo)
-		return nil
-	}
-
-	sceneSize := int(g.sceneSize)
-	cubeSize := minInt(int(g.cubeSize), sceneSize)
-	start := (sceneSize - cubeSize) / 2
-	end := start + cubeSize
-
-	svo.BuildTreeSparseFunc(g.sceneSize, func(add func(world.VoxelPoint)) {
-		for z := start; z < end; z++ {
-			for y := start; y < end; y++ {
-				for x := start; x < end; x++ {
-					add(world.VoxelPoint{X: uint(x), Y: uint(y), Z: uint(z), Color: g.color})
-				}
-			}
-		}
-	})
-
-	cache := captureCache(svo)
-	g.cache = &cache
-	return nil
+func (c cachedSVO) apply(target *world.SVO) error {
+	return target.LoadStorageBufferWords(c.words, c.occupiedMin, c.occupiedMax, c.hasOccupiedBounds)
 }
 
 func DefaultGenerators() []Generator {

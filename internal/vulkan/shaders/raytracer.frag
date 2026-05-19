@@ -25,7 +25,7 @@ layout(std430, binding = 0) readonly buffer SVOBuffer {
     uint rawNodes[];
 } svo;
 
-const int MaxDepth = 24;
+const int MaxStackDepth = 24;
 const float BoundaryEpsilon = 1e-4;
 
 const uint AXIS_X = 1u;
@@ -117,9 +117,10 @@ vec4 raymarchVoxels(vec3 ro, vec3 rd) {
     vec3 stepDir = sign(rd);
     vec3 invDir = 1.0 / (rd + sign(rd) * 1e-6);
 
-    uint nodeStack[MaxDepth + 1];
-    uvec3 posStack[MaxDepth + 1];
-    uint sizeStack[MaxDepth + 1];
+    uint nodeStack[MaxStackDepth + 1];
+    uvec3 posStack[MaxStackDepth + 1];
+    uint sizeStack[MaxStackDepth + 1];
+    int sceneDepth = clamp(findMSB(int(max(svo.svoSize, 1u))), 0, MaxStackDepth);
 
     int depth = 0;
     nodeStack[0] = 0u;
@@ -165,7 +166,7 @@ vec4 raymarchVoxels(vec3 ro, vec3 rd) {
         }
 
         // HIT CONDITION: Solid terminal leaf found!
-        if (currentNode.childPointer == 0u || depth == MaxDepth) {
+        if (currentNode.childPointer == 0u || depth >= sceneDepth) {
             uint hitAxis = hasFaceMask ? resolveFaceAxis(faceMask, rd) : dominantAxis(rd);
             hitNormal = axisNormal(hitAxis, rd);
 

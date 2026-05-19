@@ -84,14 +84,13 @@ func (g *houseGenerator) BuildSVO(svo *world.SVO) error {
 		return fmt.Errorf("svo is required")
 	}
 	if g.cache != nil {
-		g.cache.apply(svo)
-		return nil
+		return g.cache.apply(svo)
 	}
 
 	sceneSize := sceneSizeForDimension(maxInt(int(g.scale*2), 64))
 	layout := g.layout(int(sceneSize), int(sceneSize), int(sceneSize))
 	if !layout.valid {
-		svo.BuildTreeSparse(nil, sceneSize)
+		svo.BuildTreeSparseFunc(sceneSize, nil)
 		cache := captureCache(svo)
 		g.cache = &cache
 		return nil
@@ -111,7 +110,7 @@ func (g *houseGenerator) BuildSVO(svo *world.SVO) error {
 	}
 
 	shell := subtract(union(massSolids...), cutouts...)
-	svo.BuildTreeSparseFunc(sceneSize, func(add func(world.VoxelPoint)) {
+	svo.BuildTreeSparseFunc(sceneSize, func(add func(x, y, z uint, color uint32)) {
 		emitSolid(add, layout.shellBounds, shell, housePalette[houseWallVoxel])
 		for _, piece := range layout.foundationPieces {
 			emitSolid(add, piece, box(piece), housePalette[houseFoundationVoxel])
@@ -450,7 +449,7 @@ func (g *houseGenerator) layout(width, height, depth int) houseLayout {
 	}
 }
 
-func emitSolid(add func(world.VoxelPoint), bounds solidBounds, solid solidFunc, color uint32) {
+func emitSolid(add func(x, y, z uint, color uint32), bounds solidBounds, solid solidFunc, color uint32) {
 	if !bounds.valid() {
 		return
 	}
@@ -459,7 +458,7 @@ func emitSolid(add func(world.VoxelPoint), bounds solidBounds, solid solidFunc, 
 		for y := bounds.minY; y <= bounds.maxY; y++ {
 			for x := bounds.minX; x <= bounds.maxX; x++ {
 				if solid(x, y, z) {
-					add(world.VoxelPoint{X: uint(x), Y: uint(y), Z: uint(z), Color: color})
+					add(uint(x), uint(y), uint(z), color)
 				}
 			}
 		}

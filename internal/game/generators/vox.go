@@ -16,7 +16,7 @@ const defaultModelPath = "third_party/voxel-model/svo/buddha_16k.rsvo"
 
 // Keep the bundled buddha example at prune level 3 instead of the much coarser
 // prune level 4 while keeping the explicit RSVO import bounded.
-const maxRSVOPackedNodes = 20_000_000
+const maxRSVONodeBudget = 20_000_000
 
 var rsvoPalette = [255]uint32{
 	0,
@@ -172,8 +172,7 @@ func (g *voxGenerator) BuildSVO(svo *world.SVO) error {
 		return fmt.Errorf("svo is required")
 	}
 	if g.cache != nil {
-		g.cache.apply(svo)
-		return nil
+		return g.cache.apply(svo)
 	}
 
 	maxDimension := maxInt(g.model.sizeX, maxInt(g.model.sizeY, g.model.sizeZ))
@@ -181,14 +180,9 @@ func (g *voxGenerator) BuildSVO(svo *world.SVO) error {
 	offsetX := (int(sceneSize) - g.model.sizeX) / 2
 	offsetY := (int(sceneSize) - g.model.sizeY) / 2
 
-	svo.BuildTreeSparseFunc(sceneSize, func(add func(world.VoxelPoint)) {
+	svo.BuildTreeSparseFunc(sceneSize, func(add func(x, y, z uint, color uint32)) {
 		for _, voxel := range g.model.voxels {
-			add(world.VoxelPoint{
-				X:     uint(offsetX + voxel.x),
-				Y:     uint(offsetY + voxel.y),
-				Z:     uint(voxel.z),
-				Color: g.model.palette[voxel.color],
-			})
+			add(uint(offsetX+voxel.x), uint(offsetY+voxel.y), uint(voxel.z), g.model.palette[voxel.color])
 		}
 	})
 
@@ -206,14 +200,14 @@ func (g *rsvoGenerator) BuildSVO(svo *world.SVO) error {
 		return fmt.Errorf("svo is required")
 	}
 	if g.cache != nil {
-		g.cache.apply(svo)
-		return nil
+		return g.cache.apply(svo)
 	}
 
-	sceneSize := uint(1) << uint(g.model.topLevel)
-	pruneLevel := g.model.pruneLevelForNodeBudget(maxRSVOPackedNodes)
+	pruneLevel := g.model.pruneLevelForNodeBudget(maxRSVONodeBudget)
 	minBounds, maxBounds, ok := g.model.mirroredBoundsForPruneLevel(pruneLevel)
-	svo.LoadPackedNodes(sceneSize, g.model.toPackedNodes(pruneLevel), minBounds, maxBounds, ok)
+	if err := svo.LoadStorageBufferWords(g.model.toStorageBufferWords(pruneLevel), minBounds, maxBounds, ok); err != nil {
+		return fmt.Errorf("loading rsvo storage words: %w", err)
+	}
 
 	cache := captureCache(svo)
 	g.cache = &cache
@@ -604,7 +598,7 @@ func (m rsvoModel) pruneLevelForNodeBudget(maxNodes int) int {
 	return 0
 }
 
-func (m rsvoModel) toPackedNodes(pruneLevel int) []world.PackedNode {
+func (m rsvoModel) toStorageBufferWords(pruneLevel int) []uint32 {
 	totalNodes := 0
 	for level, count := range m.nodeCounts {
 		if level < pruneLevel {
@@ -613,31 +607,32 @@ func (m rsvoModel) toPackedNodes(pruneLevel int) []world.PackedNode {
 		totalNodes += int(count)
 	}
 	if totalNodes == 0 {
-		return nil
+		return []uint32{0, 0}
 	}
 
-	nodes := make([]world.PackedNode, 0, totalNodes)
 	rootSize := 1 << uint(m.topLevel)
-	m.appendPackedNode(&nodes, rsvoNode{level: m.topLevel, nodeIndex: 0, minX: 0, minY: 0, minZ: 0, size: rootSize}, pruneLevel)
-	return nodes
+	words := make([]uint32, 2, 2+totalNodes*2)
+	words[0] = uint32(rootSize)
+	m.appendStorageBufferNode(&words, rsvoNode{level: m.topLevel, nodeIndex: 0, minX: 0, minY: 0, minZ: 0, size: rootSize}, pruneLevel)
+	return words
 }
 
-func (m rsvoModel) appendPackedNode(nodes *[]world.PackedNode, node rsvoNode, pruneLevel int) uint32 {
-	nodeIndex := uint32(len(*nodes))
-	*nodes = append(*nodes, world.PackedNode{})
-	m.fillPackedNode(nodes, nodeIndex, node, pruneLevel)
+func (m rsvoModel) appendStorageBufferNode(words *[]uint32, node rsvoNode, pruneLevel int) uint32 {
+	nodeIndex := uint32((len(*words) - 2) / 2)
+	*words = append(*words, 0, 0)
+	m.fillStorageBufferNode(words, nodeIndex, node, pruneLevel)
 	return nodeIndex
 }
 
-func (m rsvoModel) fillPackedNode(nodes *[]world.PackedNode, nodeIndex uint32, node rsvoNode, pruneLevel int) {
+func (m rsvoModel) fillStorageBufferNode(words *[]uint32, nodeIndex uint32, node rsvoNode, pruneLevel int) {
+	wordIndex := 2 + nodeIndex*2
 	if node.level <= pruneLevel {
-		(*nodes)[nodeIndex] = packLeafNode(m.palette[1])
+		(*words)[wordIndex] = packLeafWord(m.palette[1])
 		return
 	}
 
 	mask := m.levels[node.level].masks[node.nodeIndex]
 	if mask == 0 {
-		(*nodes)[nodeIndex] = world.PackedNode{}
 		return
 	}
 
@@ -667,23 +662,22 @@ func (m rsvoModel) fillPackedNode(nodes *[]world.PackedNode, nodeIndex uint32, n
 		return children[i].mirroredBit < children[j].mirroredBit
 	})
 
-	packed := world.PackedNode{}
+	var childMaskAndColor uint32
 	for _, child := range children {
-		packed.ChildMaskAndColor |= 1 << uint(child.mirroredBit)
+		childMaskAndColor |= 1 << uint(child.mirroredBit)
 	}
+	(*words)[wordIndex] = childMaskAndColor
 	if len(children) == 0 {
-		(*nodes)[nodeIndex] = packed
 		return
 	}
 
-	baseChildPointer := uint32(len(*nodes))
-	packed.ChildPointer = baseChildPointer
-	(*nodes)[nodeIndex] = packed
+	baseChildPointer := uint32((len(*words) - 2) / 2)
+	(*words)[wordIndex+1] = baseChildPointer
 	for range children {
-		*nodes = append(*nodes, world.PackedNode{})
+		*words = append(*words, 0, 0)
 	}
 	for childIndex, child := range children {
-		m.fillPackedNode(nodes, baseChildPointer+uint32(childIndex), child.node, pruneLevel)
+		m.fillStorageBufferNode(words, baseChildPointer+uint32(childIndex), child.node, pruneLevel)
 	}
 }
 
@@ -722,8 +716,8 @@ func mirrorRSVOBitZ(bitIndex int) int {
 	return bitIndex ^ 0x4
 }
 
-func packLeafNode(color uint32) world.PackedNode {
-	return world.PackedNode{ChildMaskAndColor: ((color & 0xFFFFFF) << 8) | 1}
+func packLeafWord(color uint32) uint32 {
+	return ((color & 0xFFFFFF) << 8) | 1
 }
 
 func alignDownUint32(value, alignment uint32) uint32 {

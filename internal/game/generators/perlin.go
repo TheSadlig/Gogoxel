@@ -60,8 +60,7 @@ func (p *perlinGenerator) BuildSVO(svo *world.SVO) error {
 		return fmt.Errorf("svo is required")
 	}
 	if p.cache != nil {
-		p.cache.apply(svo)
-		return nil
+		return p.cache.apply(svo)
 	}
 
 	baseNoise := p
@@ -77,7 +76,7 @@ func (p *perlinGenerator) BuildSVO(svo *world.SVO) error {
 	minSurface := 0
 	maxSurface := int(p.sceneSize) - 1
 
-	svo.BuildTreeSparseFunc(p.sceneSize, func(add func(world.VoxelPoint)) {
+	svo.BuildTreeSparseFunc(p.sceneSize, func(add func(x, y, z uint, color uint32)) {
 		for y := uint(0); y < p.sceneSize; y++ {
 			for x := uint(0); x < p.sceneSize; x++ {
 				nx := (float64(x) - halfW) / widthF
@@ -117,7 +116,7 @@ func (p *perlinGenerator) BuildSVO(svo *world.SVO) error {
 						continue
 					}
 
-					add(world.VoxelPoint{X: x, Y: y, Z: uint(z), Color: perlinPalette[voxel]})
+					add(x, y, uint(z), perlinPalette[voxel])
 				}
 			}
 		}

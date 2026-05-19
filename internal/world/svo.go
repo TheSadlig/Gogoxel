@@ -1,5 +1,7 @@
 package world
 
+import "fmt"
+
 type SVO struct {
 	nodes []SvoNode
 	size  uint
@@ -7,18 +9,6 @@ type SVO struct {
 	occupiedMin       [3]uint
 	occupiedMax       [3]uint
 	hasOccupiedBounds bool
-}
-
-type VoxelPoint struct {
-	X     uint
-	Y     uint
-	Z     uint
-	Color uint32
-}
-
-type PackedNode struct {
-	ChildMaskAndColor uint32
-	ChildPointer      uint32
 }
 
 type SvoNode struct {
@@ -47,7 +37,7 @@ func (s *SVO) BuildTree(voxelGrid func(x, y, z int) (uint32, bool), size uint) {
 		for y := 0; y < int(size); y++ {
 			for x := 0; x < int(size); x++ {
 				if color, active := voxelGrid(x, y, z); active {
-					s.addLeaf(leafLayer, VoxelPoint{X: uint(x), Y: uint(y), Z: uint(z), Color: color})
+					s.addLeaf(leafLayer, uint(x), uint(y), uint(z), color)
 				}
 			}
 		}
@@ -56,31 +46,36 @@ func (s *SVO) BuildTree(voxelGrid func(x, y, z int) (uint32, bool), size uint) {
 	s.buildFromLeafLayer(leafLayer)
 }
 
-func (s *SVO) BuildTreeSparse(points []VoxelPoint, size uint) {
-	leafLayer := s.beginBuild(size)
-	for _, point := range points {
-		s.addLeaf(leafLayer, point)
-	}
-	s.buildFromLeafLayer(leafLayer)
-}
-
-func (s *SVO) BuildTreeSparseFunc(size uint, emit func(add func(VoxelPoint))) {
+func (s *SVO) BuildTreeSparseFunc(size uint, emit func(add func(x, y, z uint, color uint32))) {
 	leafLayer := s.beginBuild(size)
 	if emit != nil {
-		emit(func(point VoxelPoint) {
-			s.addLeaf(leafLayer, point)
+		emit(func(x, y, z uint, color uint32) {
+			s.addLeaf(leafLayer, x, y, z, color)
 		})
 	}
 	s.buildFromLeafLayer(leafLayer)
 }
 
-func (s *SVO) LoadPackedNodes(size uint, nodes []PackedNode, occupiedMin, occupiedMax [3]uint32, hasOccupiedBounds bool) {
-	s.size = octreeSize(size)
-	s.nodes = make([]SvoNode, maxInt(len(nodes), 1))
-	for index, node := range nodes {
-		s.nodes[index] = SvoNode{
-			childMaskAndColor: node.ChildMaskAndColor,
-			childPointer:      node.ChildPointer,
+func (s *SVO) LoadStorageBufferWords(words []uint32, occupiedMin, occupiedMax [3]uint32, hasOccupiedBounds bool) error {
+	if len(words) < 2 {
+		return fmt.Errorf("storage buffer words must include at least the size header")
+	}
+	if (len(words)-2)%2 != 0 {
+		return fmt.Errorf("storage buffer words payload must contain an even number of node words")
+	}
+
+	s.size = octreeSize(uint(words[0]))
+	nodeCount := (len(words) - 2) / 2
+	if nodeCount == 0 {
+		s.nodes = make([]SvoNode, 1)
+	} else {
+		s.nodes = make([]SvoNode, nodeCount)
+		for index := range s.nodes {
+			wordIndex := 2 + index*2
+			s.nodes[index] = SvoNode{
+				childMaskAndColor: words[wordIndex],
+				childPointer:      words[wordIndex+1],
+			}
 		}
 	}
 
@@ -88,26 +83,12 @@ func (s *SVO) LoadPackedNodes(size uint, nodes []PackedNode, occupiedMin, occupi
 	if hasOccupiedBounds {
 		s.occupiedMin = [3]uint{uint(occupiedMin[0]), uint(occupiedMin[1]), uint(occupiedMin[2])}
 		s.occupiedMax = [3]uint{uint(occupiedMax[0]), uint(occupiedMax[1]), uint(occupiedMax[2])}
-		return
+		return nil
 	}
 
 	s.occupiedMin = [3]uint{}
 	s.occupiedMax = [3]uint{}
-}
-
-func (s *SVO) PackedNodes() []PackedNode {
-	if s == nil {
-		return nil
-	}
-
-	nodes := make([]PackedNode, len(s.nodes))
-	for index, node := range s.nodes {
-		nodes[index] = PackedNode{
-			ChildMaskAndColor: node.childMaskAndColor,
-			ChildPointer:      node.childPointer,
-		}
-	}
-	return nodes
+	return nil
 }
 
 func (s *SVO) beginBuild(size uint) map[uint64]*stagingNode {
@@ -119,16 +100,16 @@ func (s *SVO) beginBuild(size uint) map[uint64]*stagingNode {
 	return make(map[uint64]*stagingNode)
 }
 
-func (s *SVO) addLeaf(leafLayer map[uint64]*stagingNode, point VoxelPoint) {
-	if point.X >= s.size || point.Y >= s.size || point.Z >= s.size {
+func (s *SVO) addLeaf(leafLayer map[uint64]*stagingNode, x, y, z uint, color uint32) {
+	if x >= s.size || y >= s.size || z >= s.size {
 		return
 	}
 
-	s.updateBounds(point.X, point.Y, point.Z)
+	s.updateBounds(x, y, z)
 
 	leaf := &stagingNode{}
-	leaf.packColorAndMask(1, point.Color)
-	leafLayer[voxelKey(point.X, point.Y, point.Z)] = leaf
+	leaf.packColorAndMask(1, color)
+	leafLayer[voxelKey(x, y, z)] = leaf
 }
 
 func (s *SVO) updateBounds(x, y, z uint) {
@@ -345,11 +326,4 @@ func (s *SVO) OccupiedBounds() (min, max [3]uint32, ok bool) {
 	return [3]uint32{uint32(s.occupiedMin[0]), uint32(s.occupiedMin[1]), uint32(s.occupiedMin[2])},
 		[3]uint32{uint32(s.occupiedMax[0]), uint32(s.occupiedMax[1]), uint32(s.occupiedMax[2])},
 		true
-}
-
-func maxInt(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }
