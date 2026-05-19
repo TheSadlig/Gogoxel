@@ -13,7 +13,10 @@ import (
 )
 
 const defaultModelPath = "third_party/voxel-model/svo/buddha_16k.rsvo"
-const maxRSVOPackedNodes = 2_000_000
+
+// Keep the bundled buddha example at prune level 4 instead of the much coarser
+// prune level 5 while still bounding the import to a manageable explicit SVO.
+const maxRSVOPackedNodes = 3_000_000
 
 var rsvoPalette = [255]uint32{
 	0,
