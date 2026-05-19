@@ -5,25 +5,19 @@ import (
 	"fmt"
 	"unsafe"
 
+	"Gogoxel/internal/world"
+
 	vk "github.com/vulkan-go/vulkan"
 )
 
 type ChunkResources struct {
 	DescriptorSet vk.DescriptorSet
-	Width         uint32
-	Height        uint32
-	Depth         uint32
 
 	device         vk.Device
 	descriptorPool vk.DescriptorPool
 	buffer         vk.Buffer
 	bufferMemory   vk.DeviceMemory
 	bufferBytes    vk.DeviceSize
-	image          vk.Image
-	imageView      vk.ImageView
-	imageMemory    vk.DeviceMemory
-	imageBytes     vk.DeviceSize
-	imageLayout    vk.ImageLayout
 }
 
 func (r *Renderer) CreateChunkResourcesFromData(chunkBindings *ChunkBindings, data []uint8, palette [255]uint32, width, height, depth uint32) (*ChunkResources, error) {
@@ -43,18 +37,36 @@ func (r *Renderer) CreateChunkResourcesFromData(chunkBindings *ChunkBindings, da
 	}
 
 	chunk := &ChunkResources{
-		Width:       width,
-		Height:      height,
-		Depth:       depth,
-		device:      r.device,
-		imageLayout: vk.ImageLayoutUndefined,
+		device: r.device,
 	}
 
 	if err := r.createChunkStorageBuffer(chunk, data, palette); err != nil {
 		chunk.Close()
 		return nil, err
 	}
-	if err := r.createChunkStorageImage(chunk); err != nil {
+	if err := r.createChunkDescriptorSet(chunkBindings, chunk); err != nil {
+		chunk.Close()
+		return nil, err
+	}
+
+	return chunk, nil
+}
+
+func (r *Renderer) CreateChunkResourcesFromSVO(chunkBindings *ChunkBindings, svo *world.SVO) (*ChunkResources, error) {
+	if svo == nil {
+		return nil, errors.New("svo is required")
+	}
+	if chunkBindings == nil || isZeroValue(chunkBindings.Layout()) {
+		return nil, errors.New("chunk bindings are required")
+	}
+
+	words := svo.StorageBufferWords()
+	if len(words) < 3 {
+		return nil, errors.New("svo must contain at least one node")
+	}
+
+	chunk := &ChunkResources{device: r.device}
+	if err := r.createChunkStorageBufferWords(chunk, words); err != nil {
 		chunk.Close()
 		return nil, err
 	}
@@ -67,10 +79,17 @@ func (r *Renderer) CreateChunkResourcesFromData(chunkBindings *ChunkBindings, da
 }
 
 func (r *Renderer) createChunkStorageBuffer(chunk *ChunkResources, data []uint8, palette [255]uint32) error {
-	packedData := packChunkData(data, palette)
+	return r.createChunkStorageBufferWords(chunk, packChunkData(data, palette))
+}
+
+func (r *Renderer) createChunkStorageBufferWords(chunk *ChunkResources, words []uint32) error {
+	if len(words) == 0 {
+		return errors.New("storage buffer data cannot be empty")
+	}
+
 	createInfo := vk.BufferCreateInfo{
 		SType:       vk.StructureTypeBufferCreateInfo,
-		Size:        vk.DeviceSize(len(packedData) * 4),
+		Size:        vk.DeviceSize(len(words) * 4),
 		Usage:       vk.BufferUsageFlags(vk.BufferUsageStorageBufferBit),
 		SharingMode: vk.SharingModeExclusive,
 	}
@@ -117,8 +136,8 @@ func (r *Renderer) createChunkStorageBuffer(chunk *ChunkResources, data []uint8,
 		return fmt.Errorf("mapping chunk buffer memory: %w", err)
 	}
 
-	mappedData := unsafe.Slice((*uint32)(mapped), len(packedData))
-	copy(mappedData, packedData)
+	mappedData := unsafe.Slice((*uint32)(mapped), len(words))
+	copy(mappedData, words)
 	vk.UnmapMemory(r.device, chunk.bufferMemory)
 
 	return nil
@@ -134,87 +153,9 @@ func packChunkData(data []uint8, palette [255]uint32) []uint32 {
 	return packed
 }
 
-func (r *Renderer) createChunkStorageImage(chunk *ChunkResources) error {
-	createInfo := vk.ImageCreateInfo{
-		SType:         vk.StructureTypeImageCreateInfo,
-		ImageType:     vk.ImageType3d,
-		Format:        vk.FormatR8Uint,
-		Extent:        vk.Extent3D{Width: chunk.Width, Height: chunk.Height, Depth: chunk.Depth},
-		MipLevels:     1,
-		ArrayLayers:   1,
-		Samples:       vk.SampleCount1Bit,
-		Tiling:        vk.ImageTilingOptimal,
-		Usage:         vk.ImageUsageFlags(vk.ImageUsageStorageBit),
-		SharingMode:   vk.SharingModeExclusive,
-		InitialLayout: vk.ImageLayoutUndefined,
-	}
-	if err := withPinnedValue(&chunk.image, func() error {
-		return vk.Error(vk.CreateImage(r.device, &createInfo, nil, &chunk.image))
-	}); err != nil {
-		return fmt.Errorf("creating chunk image: %w", err)
-	}
-
-	var memoryRequirements vk.MemoryRequirements
-	vk.GetImageMemoryRequirements(r.device, chunk.image, &memoryRequirements)
-	memoryRequirements.Deref()
-
-	var memoryProperties vk.PhysicalDeviceMemoryProperties
-	vk.GetPhysicalDeviceMemoryProperties(r.physicalDevice, &memoryProperties)
-	memoryProperties.Deref()
-
-	memoryTypeIndex, err := findMemoryTypeIndex(
-		memoryProperties,
-		memoryRequirements.MemoryTypeBits,
-		vk.MemoryPropertyFlags(vk.MemoryPropertyDeviceLocalBit),
-	)
-	if err != nil {
-		memoryTypeIndex, err = findMemoryTypeIndex(memoryProperties, memoryRequirements.MemoryTypeBits, 0)
-		if err != nil {
-			return fmt.Errorf("finding chunk image memory type: %w", err)
-		}
-	}
-
-	allocateInfo := vk.MemoryAllocateInfo{
-		SType:           vk.StructureTypeMemoryAllocateInfo,
-		AllocationSize:  memoryRequirements.Size,
-		MemoryTypeIndex: memoryTypeIndex,
-	}
-	chunk.imageBytes = allocateInfo.AllocationSize
-	if err := withPinnedValue(&chunk.imageMemory, func() error {
-		return vk.Error(vk.AllocateMemory(r.device, &allocateInfo, nil, &chunk.imageMemory))
-	}); err != nil {
-		return fmt.Errorf("allocating chunk image memory: %w", err)
-	}
-	if err := vk.Error(vk.BindImageMemory(r.device, chunk.image, chunk.imageMemory, 0)); err != nil {
-		return fmt.Errorf("binding chunk image memory: %w", err)
-	}
-
-	viewCreateInfo := vk.ImageViewCreateInfo{
-		SType:    vk.StructureTypeImageViewCreateInfo,
-		Image:    chunk.image,
-		ViewType: vk.ImageViewType3d,
-		Format:   vk.FormatR8Uint,
-		SubresourceRange: vk.ImageSubresourceRange{
-			AspectMask:     vk.ImageAspectFlags(vk.ImageAspectColorBit),
-			BaseMipLevel:   0,
-			LevelCount:     1,
-			BaseArrayLayer: 0,
-			LayerCount:     1,
-		},
-	}
-	if err := withPinnedValue(&chunk.imageView, func() error {
-		return vk.Error(vk.CreateImageView(r.device, &viewCreateInfo, nil, &chunk.imageView))
-	}); err != nil {
-		return fmt.Errorf("creating chunk image view: %w", err)
-	}
-
-	return nil
-}
-
 func (r *Renderer) createChunkDescriptorSet(chunkBindings *ChunkBindings, chunk *ChunkResources) error {
 	poolSizes := []vk.DescriptorPoolSize{
 		{Type: vk.DescriptorTypeStorageBuffer, DescriptorCount: 1},
-		{Type: vk.DescriptorTypeStorageImage, DescriptorCount: 1},
 	}
 	poolCreateInfo := vk.DescriptorPoolCreateInfo{
 		SType:         vk.StructureTypeDescriptorPoolCreateInfo,
@@ -246,10 +187,6 @@ func (r *Renderer) createChunkDescriptorSet(chunkBindings *ChunkBindings, chunk 
 		Offset: 0,
 		Range:  chunk.bufferBytes,
 	}}
-	imageInfos := []vk.DescriptorImageInfo{{
-		ImageView:   chunk.imageView,
-		ImageLayout: vk.ImageLayoutGeneral,
-	}}
 	writeDescriptorSets := []vk.WriteDescriptorSet{
 		{
 			SType:           vk.StructureTypeWriteDescriptorSet,
@@ -258,14 +195,6 @@ func (r *Renderer) createChunkDescriptorSet(chunkBindings *ChunkBindings, chunk 
 			DescriptorCount: 1,
 			DescriptorType:  vk.DescriptorTypeStorageBuffer,
 			PBufferInfo:     bufferInfos,
-		},
-		{
-			SType:           vk.StructureTypeWriteDescriptorSet,
-			DstSet:          chunk.DescriptorSet,
-			DstBinding:      1,
-			DescriptorCount: 1,
-			DescriptorType:  vk.DescriptorTypeStorageImage,
-			PImageInfo:      imageInfos,
 		},
 	}
 	vk.UpdateDescriptorSets(r.device, uint32(len(writeDescriptorSets)), writeDescriptorSets, 0, nil)
@@ -281,10 +210,7 @@ func (chunk *ChunkResources) RAMBytes() uint64 {
 }
 
 func (chunk *ChunkResources) VRAMBytes() uint64 {
-	if chunk == nil {
-		return 0
-	}
-	return uint64(chunk.imageBytes)
+	return 0
 }
 
 func (r *Renderer) SubmitOneTimeCommands(record func(vk.CommandBuffer) error) error {
@@ -373,15 +299,6 @@ func (chunk *ChunkResources) Close() {
 
 	if !isZeroValue(chunk.descriptorPool) {
 		vk.DestroyDescriptorPool(chunk.device, chunk.descriptorPool, nil)
-	}
-	if !isZeroValue(chunk.imageView) {
-		vk.DestroyImageView(chunk.device, chunk.imageView, nil)
-	}
-	if !isZeroValue(chunk.image) {
-		vk.DestroyImage(chunk.device, chunk.image, nil)
-	}
-	if !isZeroValue(chunk.imageMemory) {
-		vk.FreeMemory(chunk.device, chunk.imageMemory, nil)
 	}
 	if !isZeroValue(chunk.buffer) {
 		vk.DestroyBuffer(chunk.device, chunk.buffer, nil)

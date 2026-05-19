@@ -5,10 +5,10 @@ import (
 	"math"
 	"time"
 
-	"Gogoxel/internal/game/generators"
 	"Gogoxel/internal/input"
 	"Gogoxel/internal/platform"
 	"Gogoxel/internal/vulkan"
+	"Gogoxel/internal/world"
 
 	"github.com/go-gl/glfw/v3.3/glfw"
 )
@@ -17,11 +17,12 @@ const windowTitle = "Gogoxel Vulkan"
 
 const moveCooldown = 120 * time.Millisecond
 
-// Keep these in sync with the baked raytracer shader's chunk bounds.
+// Temporary test scene dimensions.
 const (
-	chunkWidth  = uint32(1000)
-	chunkHeight = uint32(1000)
-	chunkDepth  = uint32(1000)
+	chunkWidth   = uint32(1000)
+	chunkHeight  = uint32(1000)
+	chunkDepth   = uint32(1000)
+	testCubeSize = uint32(64)
 )
 
 const (
@@ -52,15 +53,16 @@ type Game struct {
 	camera     platform.Camera
 	chunk      *vulkan.ChunkResources
 	bindings   *vulkan.ChunkBindings
-	chunkToTex *vulkan.ChunkToTexPipeline
 	raytracer  *vulkan.RaytracerPipeline
+
+	svo *world.SVO
 }
 
 func New() *Game {
 	return &Game{
 		input: input.NewManager(defaultBindings()),
 		camera: platform.Camera{
-			Position: [3]float32{-140, 500, 290},
+			Position: [3]float32{-140, 500, 500},
 			YawDeg:   0,
 			PitchDeg: 0,
 			FovDeg:   60,
@@ -75,29 +77,38 @@ func (g *Game) InitChunk() error {
 	if g.bindings == nil {
 		return fmt.Errorf("chunk bindings are not initialized")
 	}
-	if g.chunkToTex == nil {
-		return fmt.Errorf("chunktotex pipeline is not initialized")
-	}
 
 	if g.chunk != nil {
 		g.chunk.Close()
 		g.chunk = nil
 	}
 
-	gen := generators.NewDefault()
-	data, palette := gen.Generate(chunkWidth, chunkHeight, chunkDepth)
+	// Some temporary SVO for testing
+	g.svo = world.NewSVO()
+	sceneSize := chunkWidth
+	if chunkHeight > sceneSize {
+		sceneSize = chunkHeight
+	}
+	if chunkDepth > sceneSize {
+		sceneSize = chunkDepth
+	}
+	centerX := int(chunkWidth / 2)
+	centerY := int(chunkHeight / 2)
+	centerZ := int(chunkDepth / 2)
+	halfCube := int(testCubeSize / 2)
+	g.svo.BuildTree(func(x, y, z int) (uint32, bool) {
+		inCubeX := x >= centerX-halfCube && x < centerX+halfCube
+		inCubeY := y >= centerY-halfCube && y < centerY+halfCube
+		inCubeZ := z >= centerZ-halfCube && z < centerZ+halfCube
+		return 0xFF0000, inCubeX && inCubeY && inCubeZ
+	}, uint(sceneSize))
 
-	chunk, err := g.renderer.CreateChunkResourcesFromData(g.bindings, data, palette, chunkWidth, chunkHeight, chunkDepth)
+	chunk, err := g.renderer.CreateChunkResourcesFromSVO(g.bindings, g.svo)
 	if err != nil {
-		return err
+		return fmt.Errorf("creating chunk resources from svo: %w", err)
 	}
-
-	if err := g.chunkToTex.DispatchOnce(g.renderer, chunk); err != nil {
-		chunk.Close()
-		return err
-	}
-
 	g.chunk = chunk
+
 	return nil
 }
 
@@ -120,12 +131,6 @@ func (g *Game) Run() error {
 	}
 	defer bindings.Close()
 
-	chunkToTex, err := renderer.NewChunkToTexPipeline(bindings)
-	if err != nil {
-		return err
-	}
-	defer chunkToTex.Close()
-
 	raytracer, err := renderer.NewRaytracerPipeline(bindings)
 	if err != nil {
 		return err
@@ -135,7 +140,6 @@ func (g *Game) Run() error {
 	g.window = window
 	g.renderer = renderer
 	g.bindings = bindings
-	g.chunkToTex = chunkToTex
 	g.raytracer = raytracer
 	if err := g.InitChunk(); err != nil {
 		return err

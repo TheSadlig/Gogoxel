@@ -12,7 +12,4 @@ var (
 
 	//go:embed raytracer.vert.spv
 	RaytracerVertexSPV Shader
-
-	//go:embed chunktotex.comp.spv
-	ChunkToTex Shader
 )
