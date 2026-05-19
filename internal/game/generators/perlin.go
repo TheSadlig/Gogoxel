@@ -8,7 +8,7 @@ import (
 	"Gogoxel/internal/world"
 )
 
-const perlinSceneSize uint = 128
+const perlinSceneSize uint = 120
 
 type perlinGenerator struct {
 	name      string

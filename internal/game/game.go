@@ -199,7 +199,7 @@ func (g *Game) Update(delta time.Duration) error {
 	}
 	right := g.camera.Right()
 	if g.input.Down(actionFaster) {
-		moveStep *= 10
+		moveStep *= 100
 		turnStep *= 2
 	}
 
