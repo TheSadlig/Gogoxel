@@ -6,6 +6,8 @@ layout(push_constant) uniform CameraBlock {
     vec4 forward;
     vec4 right;
     vec4 up;
+    vec4 occupiedMin;
+    vec4 occupiedMax;
     float aspect;
     float fovScale;
 } camera;
@@ -49,6 +51,10 @@ uint resolveFaceAxis(uint axisMask, vec3 rd) {
     return axis;
 }
 
+uint dominantAxis(vec3 rd) {
+    return resolveFaceAxis(AXIS_X | AXIS_Y | AXIS_Z, rd);
+}
+
 vec3 axisNormal(uint axis, vec3 rd) {
     if (axis == AXIS_X) {
         return vec3(rd.x > 0.0 ? -1.0 : 1.0, 0.0, 0.0);
@@ -68,9 +74,12 @@ SVONode getSvoNode(uint index) {
 }
 
 bool intersectSceneBounds(vec3 ro, vec3 rd, out float tMin, out float tMax, out uint entryAxis, out bool hasEntryFace) {
-    float sceneSize = max(float(svo.svoSize), 1.0);
-    vec3 boxMin = vec3(0.0);
-    vec3 boxMax = vec3(sceneSize);
+    vec3 boxMin = camera.occupiedMin.xyz;
+    vec3 boxMax = camera.occupiedMax.xyz;
+    if (any(lessThanEqual(boxMax, boxMin))) {
+        return false;
+    }
+
     vec3 invDir = 1.0 / (rd + sign(rd) * 1e-6);
     vec3 t0 = (boxMin - ro) * invDir;
     vec3 t1 = (boxMax - ro) * invDir;
@@ -155,33 +164,9 @@ vec4 raymarchVoxels(vec3 ro, vec3 rd) {
             return vec4(0.0, 0.0, 0.0, 0.0);
         }
 
-        uint halfSize = currentSize >> 1u;
-        
-        uvec3 octantXYZ = uvec3(octantX & 1u, (octantY >> 1u) & 1u, (octantZ >> 2u) & 1u);
-        uvec3 targetOctantCoord = octantXYZ + uvec3(stepDir.x > 0.0 ? 1u : 0u, stepDir.y > 0.0 ? 1u : 0u, stepDir.z > 0.0 ? 1u : 0u);
-        vec3 targetFace = vec3(currentOrigin) + vec3(halfSize) * vec3(targetOctantCoord);
-
-        vec3 tBounds = (targetFace - currPos) * invDir;
-
-        if (stepDir.x == 0.0) tBounds.x = 1.0 / 0.0;
-        if (stepDir.y == 0.0) tBounds.y = 1.0 / 0.0;
-        if (stepDir.z == 0.0) tBounds.z = 1.0 / 0.0;
-
-        uint exitAxis = AXIS_X;
-        float tStep = tBounds.x;
-        
-        if (tBounds.y < tStep) { tStep = tBounds.y; exitAxis = AXIS_Y; }
-        if (tBounds.z < tStep) { tStep = tBounds.z; exitAxis = AXIS_Z; }
-
-        float axisEpsilon = max(BoundaryEpsilon, abs(tStep) * 1e-6);
-        uint exitMask = 0u;
-        if (abs(tBounds.x - tStep) <= axisEpsilon) { exitMask |= AXIS_X; }
-        if (abs(tBounds.y - tStep) <= axisEpsilon) { exitMask |= AXIS_Y; }
-        if (abs(tBounds.z - tStep) <= axisEpsilon) { exitMask |= AXIS_Z; }
-
         // HIT CONDITION: Solid terminal leaf found!
         if (currentNode.childPointer == 0u || depth == MaxDepth) {
-            uint hitAxis = hasFaceMask ? resolveFaceAxis(faceMask, rd) : exitAxis;
+            uint hitAxis = hasFaceMask ? resolveFaceAxis(faceMask, rd) : dominantAxis(rd);
             hitNormal = axisNormal(hitAxis, rd);
 
             uint packedColor = currentNode.childMaskAndColor >> 8u;
@@ -191,6 +176,8 @@ vec4 raymarchVoxels(vec3 ro, vec3 rd) {
         }
 
         bool hasChild = ((childMask >> currentOctant) & 1u) == 1u;
+
+        uint halfSize = currentSize >> 1u;
 
         if (hasChild) {
             uint childPtr = currentNode.childPointer;
@@ -210,6 +197,28 @@ vec4 raymarchVoxels(vec3 ro, vec3 rd) {
             sizeStack[depth] = halfSize;
             continue;
         }
+
+        uvec3 octantXYZ = uvec3(octantX & 1u, (octantY >> 1u) & 1u, (octantZ >> 2u) & 1u);
+        uvec3 targetOctantCoord = octantXYZ + uvec3(stepDir.x > 0.0 ? 1u : 0u, stepDir.y > 0.0 ? 1u : 0u, stepDir.z > 0.0 ? 1u : 0u);
+        vec3 targetFace = vec3(currentOrigin) + vec3(halfSize) * vec3(targetOctantCoord);
+
+        vec3 tBounds = (targetFace - currPos) * invDir;
+
+        if (stepDir.x == 0.0) tBounds.x = 1.0 / 0.0;
+        if (stepDir.y == 0.0) tBounds.y = 1.0 / 0.0;
+        if (stepDir.z == 0.0) tBounds.z = 1.0 / 0.0;
+
+        uint exitAxis = AXIS_X;
+        float tStep = tBounds.x;
+
+        if (tBounds.y < tStep) { tStep = tBounds.y; exitAxis = AXIS_Y; }
+        if (tBounds.z < tStep) { tStep = tBounds.z; exitAxis = AXIS_Z; }
+
+        float axisEpsilon = max(BoundaryEpsilon, abs(tStep) * 1e-6);
+        uint exitMask = 0u;
+        if (abs(tBounds.x - tStep) <= axisEpsilon) { exitMask |= AXIS_X; }
+        if (abs(tBounds.y - tStep) <= axisEpsilon) { exitMask |= AXIS_Y; }
+        if (abs(tBounds.z - tStep) <= axisEpsilon) { exitMask |= AXIS_Z; }
 
         // ADVANCE MECHANIC: Step directly to the exit face edge
         t += tStep;

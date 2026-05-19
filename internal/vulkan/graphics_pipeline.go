@@ -185,7 +185,7 @@ func (p *RaytracerPipeline) init(renderPass vk.RenderPass, swapchainExtent vk.Ex
 	return nil
 }
 
-func (p *RaytracerPipeline) Bind(frame *Frame, camera platform.Camera, descriptorSet vk.DescriptorSet) error {
+func (p *RaytracerPipeline) Bind(frame *Frame, camera platform.Camera, descriptorSet vk.DescriptorSet, occupiedMin, occupiedMax [3]float32) error {
 	if p == nil || isZeroValue(p.pipeline) || isZeroValue(p.layout) {
 		return errors.New("raytracer pipeline is not initialized")
 	}
@@ -201,12 +201,14 @@ func (p *RaytracerPipeline) Bind(frame *Frame, camera platform.Camera, descripto
 	up := camera.Up()
 	aspect := float32(frame.Extent.Width) / float32(frame.Extent.Height)
 	pushConstants := CameraPushConstant{
-		CameraPos: [4]float32{camera.Position[0], camera.Position[1], camera.Position[2], 0},
-		Forward:   [4]float32{forward[0], forward[1], forward[2], 0},
-		Right:     [4]float32{right[0], right[1], right[2], 0},
-		Up:        [4]float32{up[0], up[1], up[2], 0},
-		Aspect:    aspect,
-		FovScale:  float32(math.Tan(float64(camera.FovDeg) * 0.5 * math.Pi / 180.0)),
+		CameraPos:   [4]float32{camera.Position[0], camera.Position[1], camera.Position[2], 0},
+		Forward:     [4]float32{forward[0], forward[1], forward[2], 0},
+		Right:       [4]float32{right[0], right[1], right[2], 0},
+		Up:          [4]float32{up[0], up[1], up[2], 0},
+		OccupiedMin: [4]float32{occupiedMin[0], occupiedMin[1], occupiedMin[2], 0},
+		OccupiedMax: [4]float32{occupiedMax[0], occupiedMax[1], occupiedMax[2], 0},
+		Aspect:      aspect,
+		FovScale:    float32(math.Tan(float64(camera.FovDeg) * 0.5 * math.Pi / 180.0)),
 	}
 
 	frame.BeginRenderPass()
@@ -243,8 +245,8 @@ func (p *RaytracerPipeline) DrawFullscreen(frame *Frame) error {
 	return nil
 }
 
-func (p *RaytracerPipeline) Record(frame *Frame, camera platform.Camera, descriptorSet vk.DescriptorSet) error {
-	if err := p.Bind(frame, camera, descriptorSet); err != nil {
+func (p *RaytracerPipeline) Record(frame *Frame, camera platform.Camera, descriptorSet vk.DescriptorSet, occupiedMin, occupiedMax [3]float32) error {
+	if err := p.Bind(frame, camera, descriptorSet, occupiedMin, occupiedMax); err != nil {
 		return err
 	}
 

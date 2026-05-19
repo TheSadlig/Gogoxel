@@ -87,60 +87,117 @@ func (r *Renderer) createChunkStorageBufferWords(chunk *ChunkResources, words []
 		return errors.New("storage buffer data cannot be empty")
 	}
 
-	createInfo := vk.BufferCreateInfo{
-		SType:       vk.StructureTypeBufferCreateInfo,
-		Size:        vk.DeviceSize(len(words) * 4),
-		Usage:       vk.BufferUsageFlags(vk.BufferUsageStorageBufferBit),
-		SharingMode: vk.SharingModeExclusive,
-	}
-	if err := withPinnedValue(&chunk.buffer, func() error {
-		return vk.Error(vk.CreateBuffer(r.device, &createInfo, nil, &chunk.buffer))
-	}); err != nil {
-		return fmt.Errorf("creating chunk storage buffer: %w", err)
-	}
-
-	var memoryRequirements vk.MemoryRequirements
-	vk.GetBufferMemoryRequirements(r.device, chunk.buffer, &memoryRequirements)
-	memoryRequirements.Deref()
+	size := vk.DeviceSize(len(words) * 4)
 
 	var memoryProperties vk.PhysicalDeviceMemoryProperties
 	vk.GetPhysicalDeviceMemoryProperties(r.physicalDevice, &memoryProperties)
 	memoryProperties.Deref()
 
-	memoryTypeIndex, err := findMemoryTypeIndex(
+	// ── Staging buffer (CPU-writable) ────────────────────────────────────────
+	stagingCreateInfo := vk.BufferCreateInfo{
+		SType:       vk.StructureTypeBufferCreateInfo,
+		Size:        size,
+		Usage:       vk.BufferUsageFlags(vk.BufferUsageTransferSrcBit),
+		SharingMode: vk.SharingModeExclusive,
+	}
+	var stagingBuffer vk.Buffer
+	if err := withPinnedValue(&stagingBuffer, func() error {
+		return vk.Error(vk.CreateBuffer(r.device, &stagingCreateInfo, nil, &stagingBuffer))
+	}); err != nil {
+		return fmt.Errorf("creating staging buffer: %w", err)
+	}
+	defer vk.DestroyBuffer(r.device, stagingBuffer, nil)
+
+	var stagingReqs vk.MemoryRequirements
+	vk.GetBufferMemoryRequirements(r.device, stagingBuffer, &stagingReqs)
+	stagingReqs.Deref()
+
+	stagingTypeIdx, err := findMemoryTypeIndex(
 		memoryProperties,
-		memoryRequirements.MemoryTypeBits,
+		stagingReqs.MemoryTypeBits,
 		vk.MemoryPropertyFlags(vk.MemoryPropertyHostVisibleBit|vk.MemoryPropertyHostCoherentBit),
 	)
 	if err != nil {
-		return fmt.Errorf("finding chunk buffer memory type: %w", err)
+		return fmt.Errorf("finding staging buffer memory type: %w", err)
+	}
+	var stagingMemory vk.DeviceMemory
+	if err := withPinnedValue(&stagingMemory, func() error {
+		return vk.Error(vk.AllocateMemory(r.device, &vk.MemoryAllocateInfo{
+			SType:           vk.StructureTypeMemoryAllocateInfo,
+			AllocationSize:  stagingReqs.Size,
+			MemoryTypeIndex: stagingTypeIdx,
+		}, nil, &stagingMemory))
+	}); err != nil {
+		return fmt.Errorf("allocating staging memory: %w", err)
+	}
+	defer vk.FreeMemory(r.device, stagingMemory, nil)
+
+	if err := vk.Error(vk.BindBufferMemory(r.device, stagingBuffer, stagingMemory, 0)); err != nil {
+		return fmt.Errorf("binding staging memory: %w", err)
+	}
+	var mapped unsafe.Pointer
+	if err := vk.Error(vk.MapMemory(r.device, stagingMemory, 0, size, 0, &mapped)); err != nil {
+		return fmt.Errorf("mapping staging memory: %w", err)
+	}
+	copy(unsafe.Slice((*uint32)(mapped), len(words)), words)
+	vk.UnmapMemory(r.device, stagingMemory)
+
+	// ── Device-local buffer (GPU-readable) ───────────────────────────────────
+	deviceCreateInfo := vk.BufferCreateInfo{
+		SType:       vk.StructureTypeBufferCreateInfo,
+		Size:        size,
+		Usage:       vk.BufferUsageFlags(vk.BufferUsageStorageBufferBit | vk.BufferUsageTransferDstBit),
+		SharingMode: vk.SharingModeExclusive,
+	}
+	if err := withPinnedValue(&chunk.buffer, func() error {
+		return vk.Error(vk.CreateBuffer(r.device, &deviceCreateInfo, nil, &chunk.buffer))
+	}); err != nil {
+		return fmt.Errorf("creating device-local buffer: %w", err)
+	}
+
+	var deviceReqs vk.MemoryRequirements
+	vk.GetBufferMemoryRequirements(r.device, chunk.buffer, &deviceReqs)
+	deviceReqs.Deref()
+
+	// Prefer DEVICE_LOCAL; fall back to HOST_VISIBLE if device-local is unavailable
+	// (e.g. integrated GPU with unified memory).
+	deviceTypeIdx, err := findMemoryTypeIndex(
+		memoryProperties,
+		deviceReqs.MemoryTypeBits,
+		vk.MemoryPropertyFlags(vk.MemoryPropertyDeviceLocalBit),
+	)
+	if err != nil {
+		deviceTypeIdx, err = findMemoryTypeIndex(
+			memoryProperties,
+			deviceReqs.MemoryTypeBits,
+			vk.MemoryPropertyFlags(vk.MemoryPropertyHostVisibleBit|vk.MemoryPropertyHostCoherentBit),
+		)
+		if err != nil {
+			return fmt.Errorf("finding device-local buffer memory type: %w", err)
+		}
 	}
 
 	allocateInfo := vk.MemoryAllocateInfo{
 		SType:           vk.StructureTypeMemoryAllocateInfo,
-		AllocationSize:  memoryRequirements.Size,
-		MemoryTypeIndex: memoryTypeIndex,
+		AllocationSize:  deviceReqs.Size,
+		MemoryTypeIndex: deviceTypeIdx,
 	}
 	chunk.bufferBytes = allocateInfo.AllocationSize
 	if err := withPinnedValue(&chunk.bufferMemory, func() error {
 		return vk.Error(vk.AllocateMemory(r.device, &allocateInfo, nil, &chunk.bufferMemory))
 	}); err != nil {
-		return fmt.Errorf("allocating chunk buffer memory: %w", err)
+		return fmt.Errorf("allocating device-local memory: %w", err)
 	}
 	if err := vk.Error(vk.BindBufferMemory(r.device, chunk.buffer, chunk.bufferMemory, 0)); err != nil {
-		return fmt.Errorf("binding chunk buffer memory: %w", err)
+		return fmt.Errorf("binding device-local memory: %w", err)
 	}
 
-	var mapped unsafe.Pointer
-	if err := vk.Error(vk.MapMemory(r.device, chunk.bufferMemory, 0, createInfo.Size, 0, &mapped)); err != nil {
-		return fmt.Errorf("mapping chunk buffer memory: %w", err)
-	}
-
-	mappedData := unsafe.Slice((*uint32)(mapped), len(words))
-	copy(mappedData, words)
-	vk.UnmapMemory(r.device, chunk.bufferMemory)
-
-	return nil
+	// ── Copy staging → device-local ──────────────────────────────────────────
+	return r.SubmitOneTimeCommands(func(cb vk.CommandBuffer) error {
+		regions := []vk.BufferCopy{{Size: size}}
+		vk.CmdCopyBuffer(cb, stagingBuffer, chunk.buffer, 1, regions)
+		return nil
+	})
 }
 
 func packChunkData(data []uint8, palette [255]uint32) []uint32 {
@@ -308,4 +365,11 @@ func (chunk *ChunkResources) Close() {
 	}
 
 	*chunk = ChunkResources{}
+}
+
+func (chunk *ChunkResources) GPUBytes() uint64 {
+	if chunk == nil {
+		return 0
+	}
+	return uint64(chunk.bufferBytes)
 }

@@ -312,12 +312,14 @@ func (r *Renderer) createRenderPass() error {
 }
 
 type CameraPushConstant struct {
-	CameraPos [4]float32
-	Forward   [4]float32
-	Right     [4]float32
-	Up        [4]float32
-	Aspect    float32
-	FovScale  float32
+	CameraPos   [4]float32
+	Forward     [4]float32
+	Right       [4]float32
+	Up          [4]float32
+	OccupiedMin [4]float32
+	OccupiedMax [4]float32
+	Aspect      float32
+	FovScale    float32
 }
 
 func (r *Renderer) createFramebuffers() error {

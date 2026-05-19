@@ -274,12 +274,14 @@ func (g *Game) updateWindowTitle() {
 
 	title := windowTitle
 	if g.lastFPS > 0 {
-		title = fmt.Sprintf("%s | %.1f FPS", windowTitle, g.lastFPS)
+		title = fmt.Sprintf("%s | %.1f FPS", title, g.lastFPS)
+	}
+	if g.svo != nil {
+		title = fmt.Sprintf("%s | SVO %d nodes", title, g.svo.NodeCount())
 	}
 	if g.chunk != nil {
-		title = fmt.Sprintf("%s | RAM %s | VRAM %s", title, formatBytes(g.chunk.RAMBytes()), formatBytes(g.chunk.VRAMBytes()))
+		title = fmt.Sprintf("%s | GPU %s", title, formatBytes(g.chunk.GPUBytes()))
 	}
-
 	g.window.SetTitle(title)
 }
 
@@ -308,7 +310,17 @@ func (g *Game) Render(frame *vulkan.Frame) error {
 		return fmt.Errorf("chunk resources are not initialized")
 	}
 
-	return g.raytracer.Record(frame, g.camera, g.chunk.DescriptorSet)
+	var occupiedMin [3]float32
+	var occupiedMax [3]float32
+	if g.svo != nil {
+		minBounds, maxBounds, ok := g.svo.OccupiedBounds()
+		if ok {
+			occupiedMin = [3]float32{float32(minBounds[0]), float32(minBounds[1]), float32(minBounds[2])}
+			occupiedMax = [3]float32{float32(maxBounds[0]), float32(maxBounds[1]), float32(maxBounds[2])}
+		}
+	}
+
+	return g.raytracer.Record(frame, g.camera, g.chunk.DescriptorSet, occupiedMin, occupiedMax)
 }
 
 func defaultBindings() map[input.Action]input.Binding {

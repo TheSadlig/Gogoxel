@@ -3,6 +3,10 @@ package world
 type SVO struct {
 	nodes []SvoNode
 	size  uint
+
+	occupiedMin      [3]uint
+	occupiedMax      [3]uint
+	hasOccupiedBounds bool
 }
 
 type SvoNode struct {
@@ -25,6 +29,9 @@ func NewSVO() *SVO {
 
 func (s *SVO) BuildTree(voxelGrid func(x, y, z int) (uint32, bool), size uint) {
 	s.size = octreeSize(size)
+	s.occupiedMin = [3]uint{}
+	s.occupiedMax = [3]uint{}
+	s.hasOccupiedBounds = false
 	leafLayer := make(map[uint64]*stagingNode)
 
 	// Step 1: Naively generate the baseline leaf layer (1x1x1 voxels)
@@ -32,6 +39,31 @@ func (s *SVO) BuildTree(voxelGrid func(x, y, z int) (uint32, bool), size uint) {
 		for y := 0; y < int(size); y++ {
 			for x := 0; x < int(size); x++ {
 				if color, active := voxelGrid(x, y, z); active {
+					if !s.hasOccupiedBounds {
+						s.occupiedMin = [3]uint{uint(x), uint(y), uint(z)}
+						s.occupiedMax = [3]uint{uint(x + 1), uint(y + 1), uint(z + 1)}
+						s.hasOccupiedBounds = true
+					} else {
+						if uint(x) < s.occupiedMin[0] {
+							s.occupiedMin[0] = uint(x)
+						}
+						if uint(y) < s.occupiedMin[1] {
+							s.occupiedMin[1] = uint(y)
+						}
+						if uint(z) < s.occupiedMin[2] {
+							s.occupiedMin[2] = uint(z)
+						}
+						if uint(x+1) > s.occupiedMax[0] {
+							s.occupiedMax[0] = uint(x + 1)
+						}
+						if uint(y+1) > s.occupiedMax[1] {
+							s.occupiedMax[1] = uint(y + 1)
+						}
+						if uint(z+1) > s.occupiedMax[2] {
+							s.occupiedMax[2] = uint(z + 1)
+						}
+					}
+
 					leaf := &stagingNode{}
 					leaf.packColorAndMask(1, color) // Individual solid leaf marker
 
@@ -198,4 +230,21 @@ func (s *SVO) StorageBufferWords() []uint32 {
 		words[wordIndex+1] = node.childPointer
 	}
 	return words
+}
+
+func (s *SVO) NodeCount() int {
+	if s == nil {
+		return 0
+	}
+	return len(s.nodes)
+}
+
+func (s *SVO) OccupiedBounds() (min, max [3]uint32, ok bool) {
+	if s == nil || !s.hasOccupiedBounds {
+		return [3]uint32{}, [3]uint32{}, false
+	}
+
+	return [3]uint32{uint32(s.occupiedMin[0]), uint32(s.occupiedMin[1]), uint32(s.occupiedMin[2])},
+		[3]uint32{uint32(s.occupiedMax[0]), uint32(s.occupiedMax[1]), uint32(s.occupiedMax[2])},
+		true
 }
