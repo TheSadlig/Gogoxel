@@ -25,7 +25,7 @@ layout(std430, binding = 0) readonly buffer SVOBuffer {
     uint rawNodes[];
 } svo;
 
-const int MaxDepth = 10; // Log2(1024)
+const int MaxDepth = 24;
 const float BoundaryEpsilon = 1e-4;
 
 const uint AXIS_X = 1u;
