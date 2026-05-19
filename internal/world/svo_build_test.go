@@ -66,6 +66,25 @@ func TestBuildTreeSparseFuncMatchesDenseSingleVoxel(t *testing.T) {
 	}
 }
 
+func TestBuildTreeSparseFuncTracksOccupiedBounds(t *testing.T) {
+	svo := NewSVO()
+	svo.BuildTreeSparseFunc(16, func(add func(x, y, z uint, color uint32)) {
+		add(2, 4, 6, 0x112233)
+		add(9, 7, 3, 0x445566)
+	})
+
+	gotMin, gotMax, gotOK := svo.OccupiedBounds()
+	if !gotOK {
+		t.Fatal("OccupiedBounds ok = false, want true")
+	}
+	if gotMin != [3]uint32{2, 4, 3} {
+		t.Fatalf("OccupiedBounds min = %v, want %v", gotMin, [3]uint32{2, 4, 3})
+	}
+	if gotMax != [3]uint32{10, 8, 7} {
+		t.Fatalf("OccupiedBounds max = %v, want %v", gotMax, [3]uint32{10, 8, 7})
+	}
+}
+
 func TestLoadStorageBufferWordsCopiesState(t *testing.T) {
 	source := NewSVO()
 	source.BuildTreeSparseFunc(8, func(add func(x, y, z uint, color uint32)) {

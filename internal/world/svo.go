@@ -43,7 +43,7 @@ func (s *SVO) BuildTree(voxelGrid func(x, y, z int) (uint32, bool), size uint) {
 		}
 	}
 
-	s.buildFromLeafLayer(leafLayer)
+	s.finishBuild(leafLayer)
 }
 
 func (s *SVO) BuildTreeSparseFunc(size uint, emit func(add func(x, y, z uint, color uint32))) {
@@ -53,7 +53,7 @@ func (s *SVO) BuildTreeSparseFunc(size uint, emit func(add func(x, y, z uint, co
 			s.addLeaf(leafLayer, x, y, z, color)
 		})
 	}
-	s.buildFromLeafLayer(leafLayer)
+	s.finishBuild(leafLayer)
 }
 
 func (s *SVO) LoadStorageBufferWords(words []uint32, occupiedMin, occupiedMax [3]uint32, hasOccupiedBounds bool) error {
@@ -100,43 +100,54 @@ func (s *SVO) beginBuild(size uint) map[uint64]*stagingNode {
 	return make(map[uint64]*stagingNode)
 }
 
+func (s *SVO) finishBuild(leafLayer map[uint64]*stagingNode) {
+	s.deriveOccupiedBounds(leafLayer)
+	s.buildFromLeafLayer(leafLayer)
+}
+
 func (s *SVO) addLeaf(leafLayer map[uint64]*stagingNode, x, y, z uint, color uint32) {
 	if x >= s.size || y >= s.size || z >= s.size {
 		return
 	}
-
-	s.updateBounds(x, y, z)
 
 	leaf := &stagingNode{}
 	leaf.packColorAndMask(1, color)
 	leafLayer[voxelKey(x, y, z)] = leaf
 }
 
-func (s *SVO) updateBounds(x, y, z uint) {
-	if !s.hasOccupiedBounds {
-		s.occupiedMin = [3]uint{x, y, z}
-		s.occupiedMax = [3]uint{x + 1, y + 1, z + 1}
-		s.hasOccupiedBounds = true
-		return
-	}
+func (s *SVO) deriveOccupiedBounds(leafLayer map[uint64]*stagingNode) {
+	s.occupiedMin = [3]uint{}
+	s.occupiedMax = [3]uint{}
+	s.hasOccupiedBounds = false
 
-	if x < s.occupiedMin[0] {
-		s.occupiedMin[0] = x
-	}
-	if y < s.occupiedMin[1] {
-		s.occupiedMin[1] = y
-	}
-	if z < s.occupiedMin[2] {
-		s.occupiedMin[2] = z
-	}
-	if x+1 > s.occupiedMax[0] {
-		s.occupiedMax[0] = x + 1
-	}
-	if y+1 > s.occupiedMax[1] {
-		s.occupiedMax[1] = y + 1
-	}
-	if z+1 > s.occupiedMax[2] {
-		s.occupiedMax[2] = z + 1
+	for key := range leafLayer {
+		x := uint(key & 0xFFFFF)
+		y := uint((key >> 20) & 0xFFFFF)
+		z := uint((key >> 40) & 0xFFFFF)
+		if !s.hasOccupiedBounds {
+			s.occupiedMin = [3]uint{x, y, z}
+			s.occupiedMax = [3]uint{x + 1, y + 1, z + 1}
+			s.hasOccupiedBounds = true
+			continue
+		}
+		if x < s.occupiedMin[0] {
+			s.occupiedMin[0] = x
+		}
+		if y < s.occupiedMin[1] {
+			s.occupiedMin[1] = y
+		}
+		if z < s.occupiedMin[2] {
+			s.occupiedMin[2] = z
+		}
+		if x+1 > s.occupiedMax[0] {
+			s.occupiedMax[0] = x + 1
+		}
+		if y+1 > s.occupiedMax[1] {
+			s.occupiedMax[1] = y + 1
+		}
+		if z+1 > s.occupiedMax[2] {
+			s.occupiedMax[2] = z + 1
+		}
 	}
 }
 
