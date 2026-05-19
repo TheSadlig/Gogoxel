@@ -13,6 +13,7 @@ import (
 )
 
 const defaultModelPath = "third_party/voxel-model/svo/buddha_16k.rsvo"
+const maxRSVOPackedNodes = 2_000_000
 
 var rsvoPalette = [255]uint32{
 	0,
@@ -207,8 +208,9 @@ func (g *rsvoGenerator) BuildSVO(svo *world.SVO) error {
 	}
 
 	sceneSize := uint(1) << uint(g.model.topLevel)
-	minBounds, maxBounds, ok := g.model.mirroredBounds()
-	svo.LoadPackedNodes(sceneSize, g.model.toPackedNodes(), minBounds, maxBounds, ok)
+	pruneLevel := g.model.pruneLevelForNodeBudget(maxRSVOPackedNodes)
+	minBounds, maxBounds, ok := g.model.mirroredBoundsForPruneLevel(pruneLevel)
+	svo.LoadPackedNodes(sceneSize, g.model.toPackedNodes(pruneLevel), minBounds, maxBounds, ok)
 
 	cache := captureCache(svo)
 	g.cache = &cache
@@ -556,9 +558,55 @@ func (m rsvoModel) mirroredBounds() (min, max [3]uint32, ok bool) {
 		true
 }
 
-func (m rsvoModel) toPackedNodes() []world.PackedNode {
+func (m rsvoModel) mirroredBoundsForPruneLevel(pruneLevel int) (min, max [3]uint32, ok bool) {
+	min, max, ok = m.mirroredBounds()
+	if !ok {
+		return [3]uint32{}, [3]uint32{}, false
+	}
+
+	if pruneLevel <= 0 {
+		return min, max, true
+	}
+
+	rootSize := uint32(1) << uint(m.topLevel)
+	cellSize := uint32(1) << uint(pruneLevel)
+	for axis := range min {
+		min[axis] = alignDownUint32(min[axis], cellSize)
+		max[axis] = alignUpUint32(max[axis], cellSize)
+		if max[axis] > rootSize {
+			max[axis] = rootSize
+		}
+	}
+
+	return min, max, true
+}
+
+func (m rsvoModel) pruneLevelForNodeBudget(maxNodes int) int {
+	if maxNodes <= 1 {
+		return m.topLevel
+	}
+
 	totalNodes := 0
-	for _, count := range m.nodeCounts {
+	for level := m.topLevel; level >= 0; level-- {
+		nextTotal := totalNodes + int(m.nodeCounts[level])
+		if nextTotal > maxNodes {
+			if level == m.topLevel {
+				return m.topLevel
+			}
+			return level + 1
+		}
+		totalNodes = nextTotal
+	}
+
+	return 0
+}
+
+func (m rsvoModel) toPackedNodes(pruneLevel int) []world.PackedNode {
+	totalNodes := 0
+	for level, count := range m.nodeCounts {
+		if level < pruneLevel {
+			continue
+		}
 		totalNodes += int(count)
 	}
 	if totalNodes == 0 {
@@ -567,19 +615,19 @@ func (m rsvoModel) toPackedNodes() []world.PackedNode {
 
 	nodes := make([]world.PackedNode, 0, totalNodes)
 	rootSize := 1 << uint(m.topLevel)
-	m.appendPackedNode(&nodes, rsvoNode{level: m.topLevel, nodeIndex: 0, minX: 0, minY: 0, minZ: 0, size: rootSize})
+	m.appendPackedNode(&nodes, rsvoNode{level: m.topLevel, nodeIndex: 0, minX: 0, minY: 0, minZ: 0, size: rootSize}, pruneLevel)
 	return nodes
 }
 
-func (m rsvoModel) appendPackedNode(nodes *[]world.PackedNode, node rsvoNode) uint32 {
+func (m rsvoModel) appendPackedNode(nodes *[]world.PackedNode, node rsvoNode, pruneLevel int) uint32 {
 	nodeIndex := uint32(len(*nodes))
 	*nodes = append(*nodes, world.PackedNode{})
-	m.fillPackedNode(nodes, nodeIndex, node)
+	m.fillPackedNode(nodes, nodeIndex, node, pruneLevel)
 	return nodeIndex
 }
 
-func (m rsvoModel) fillPackedNode(nodes *[]world.PackedNode, nodeIndex uint32, node rsvoNode) {
-	if node.level == 0 {
+func (m rsvoModel) fillPackedNode(nodes *[]world.PackedNode, nodeIndex uint32, node rsvoNode, pruneLevel int) {
+	if node.level <= pruneLevel {
 		(*nodes)[nodeIndex] = packLeafNode(m.palette[1])
 		return
 	}
@@ -632,7 +680,7 @@ func (m rsvoModel) fillPackedNode(nodes *[]world.PackedNode, nodeIndex uint32, n
 		*nodes = append(*nodes, world.PackedNode{})
 	}
 	for childIndex, child := range children {
-		m.fillPackedNode(nodes, baseChildPointer+uint32(childIndex), child.node)
+		m.fillPackedNode(nodes, baseChildPointer+uint32(childIndex), child.node, pruneLevel)
 	}
 }
 
@@ -673,6 +721,21 @@ func mirrorRSVOBitZ(bitIndex int) int {
 
 func packLeafNode(color uint32) world.PackedNode {
 	return world.PackedNode{ChildMaskAndColor: ((color & 0xFFFFFF) << 8) | 1}
+}
+
+func alignDownUint32(value, alignment uint32) uint32 {
+	if alignment <= 1 {
+		return value
+	}
+	return value &^ (alignment - 1)
+}
+
+func alignUpUint32(value, alignment uint32) uint32 {
+	if alignment <= 1 {
+		return value
+	}
+	mask := alignment - 1
+	return (value + mask) &^ mask
 }
 
 const rsvoRankBlockSize = 1024
