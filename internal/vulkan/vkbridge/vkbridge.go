@@ -203,7 +203,7 @@ func CreateRenderPass(device vk.Device, format vk.Format) (vk.RenderPass, error)
 	defer C.free(unsafe.Pointer(attachment))
 	attachment.format = C.VkFormat(format)
 	attachment.samples = C.VK_SAMPLE_COUNT_1_BIT
-	attachment.loadOp = C.VK_ATTACHMENT_LOAD_OP_DONT_CARE
+	attachment.loadOp = C.VK_ATTACHMENT_LOAD_OP_CLEAR
 	attachment.storeOp = C.VK_ATTACHMENT_STORE_OP_STORE
 	attachment.stencilLoadOp = C.VK_ATTACHMENT_LOAD_OP_DONT_CARE
 	attachment.stencilStoreOp = C.VK_ATTACHMENT_STORE_OP_DONT_CARE

@@ -14,6 +14,7 @@ type Frame struct {
 	renderer       *Renderer
 	CommandBuffer  vk.CommandBuffer
 	ImageIndex     uint32
+	FrameSlot      int
 	Extent         vk.Extent2D
 	renderPassOpen bool
 }
@@ -27,10 +28,16 @@ func (f *Frame) BeginRenderPass() {
 		return
 	}
 
+	clearValues := []vk.ClearValue{
+		vk.NewClearValue([]float32{0.66, 0.78, 0.93, 1.0}),
+	}
+
 	renderPassInfo := vk.RenderPassBeginInfo{
-		SType:       vk.StructureTypeRenderPassBeginInfo,
-		RenderPass:  f.renderer.renderPass,
-		Framebuffer: f.renderer.swapchainFramebuffers[f.ImageIndex],
+		SType:           vk.StructureTypeRenderPassBeginInfo,
+		RenderPass:      f.renderer.renderPass,
+		Framebuffer:     f.renderer.swapchainFramebuffers[f.ImageIndex],
+		ClearValueCount: uint32(len(clearValues)),
+		PClearValues:    clearValues,
 		RenderArea: vk.Rect2D{
 			Offset: vk.Offset2D{X: 0, Y: 0},
 			Extent: f.renderer.swapchainExtent,
@@ -72,6 +79,7 @@ func (r *Renderer) createSyncObjects() error {
 	r.inFlightFences = make([]vk.Fence, maxFramesInFlight)
 	r.renderFinishedSemaphores = make([]vk.Semaphore, len(r.swapchainImages))
 	r.imagesInFlight = make([]vk.Fence, len(r.swapchainImages))
+	r.frameReleases = make([][]func(), maxFramesInFlight)
 	r.currentFrame = 0
 
 	for index := range r.imageAvailableSemaphores {
@@ -109,6 +117,7 @@ func (r *Renderer) DrawFrame(record func(*Frame) error) error {
 	if err := vk.Error(vk.WaitForFences(r.device, 1, fences, vk.True, math.MaxUint64)); err != nil {
 		return fmt.Errorf("waiting for in-flight fence: %w", err)
 	}
+	r.runDeferredReleases(currentFrame)
 
 	var imageIndex uint32
 	var nullFence vk.Fence
@@ -129,7 +138,7 @@ func (r *Renderer) DrawFrame(record func(*Frame) error) error {
 		return fmt.Errorf("resetting in-flight fence: %w", err)
 	}
 
-	if err := r.recordCommandBuffer(imageIndex, record); err != nil {
+	if err := r.recordCommandBuffer(currentFrame, imageIndex, record); err != nil {
 		return err
 	}
 
@@ -173,7 +182,7 @@ func (r *Renderer) DrawFrame(record func(*Frame) error) error {
 	return nil
 }
 
-func (r *Renderer) recordCommandBuffer(imageIndex uint32, record func(*Frame) error) error {
+func (r *Renderer) recordCommandBuffer(frameSlot int, imageIndex uint32, record func(*Frame) error) error {
 	commandBuffer := r.commandBuffers[imageIndex]
 	if err := vk.Error(vk.ResetCommandBuffer(commandBuffer, 0)); err != nil {
 		return fmt.Errorf("resetting command buffer %d: %w", imageIndex, err)
@@ -190,6 +199,7 @@ func (r *Renderer) recordCommandBuffer(imageIndex uint32, record func(*Frame) er
 		renderer:      r,
 		CommandBuffer: commandBuffer,
 		ImageIndex:    imageIndex,
+		FrameSlot:     frameSlot,
 		Extent:        r.swapchainExtent,
 	}
 

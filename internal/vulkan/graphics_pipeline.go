@@ -37,7 +37,7 @@ func (p *RaytracerPipeline) init(renderPass vk.RenderPass, swapchainExtent vk.Ex
 	defer strings.Free()
 
 	pushConstantRange := vk.PushConstantRange{
-		StageFlags: vk.ShaderStageFlags(vk.ShaderStageVertexBit | vk.ShaderStageFragmentBit),
+		StageFlags: vk.ShaderStageFlags(vk.ShaderStageFragmentBit),
 		Offset:     0,
 		Size:       uint32(unsafe.Sizeof(CameraPushConstant{})),
 	}
@@ -83,17 +83,8 @@ func (p *RaytracerPipeline) init(renderPass vk.RenderPass, swapchainExtent vk.Ex
 		},
 	}
 
-	attributes := []vk.VertexInputAttributeDescription{{
-		Location: 0,
-		Binding:  0,
-		Format:   vk.FormatR8g8b8a8Unorm,
-		Offset:   0,
-	}}
-	bindingDescriptions := []vk.VertexInputBindingDescription{{
-		Binding:   0,
-		Stride:    12,
-		InputRate: vk.VertexInputRateVertex,
-	}}
+	// The raytracer uses a fullscreen triangle synthesized from gl_VertexIndex,
+	// so there is no vertex input state at all.
 	viewport := []vk.Viewport{{
 		X:        0,
 		Y:        0,
@@ -109,10 +100,8 @@ func (p *RaytracerPipeline) init(renderPass vk.RenderPass, swapchainExtent vk.Ex
 
 	vertexInputState := vk.PipelineVertexInputStateCreateInfo{
 		SType:                           vk.StructureTypePipelineVertexInputStateCreateInfo,
-		VertexBindingDescriptionCount:   uint32(len(bindingDescriptions)),
-		PVertexBindingDescriptions:      bindingDescriptions,
-		VertexAttributeDescriptionCount: uint32(len(attributes)),
-		PVertexAttributeDescriptions:    attributes,
+		VertexBindingDescriptionCount:   0,
+		VertexAttributeDescriptionCount: 0,
 	}
 	inputAssemblyState := vk.PipelineInputAssemblyStateCreateInfo{
 		SType:                  vk.StructureTypePipelineInputAssemblyStateCreateInfo,
@@ -227,7 +216,7 @@ func (p *RaytracerPipeline) Bind(frame *Frame, camera platform.Camera, descripto
 	vk.CmdPushConstants(
 		frame.CommandBuffer,
 		p.layout,
-		vk.ShaderStageFlags(vk.ShaderStageVertexBit|vk.ShaderStageFragmentBit),
+		vk.ShaderStageFlags(vk.ShaderStageFragmentBit),
 		0,
 		uint32(unsafe.Sizeof(pushConstants)),
 		unsafe.Pointer(&pushConstants),

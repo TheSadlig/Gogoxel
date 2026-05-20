@@ -8,7 +8,10 @@ import (
 	"Gogoxel/internal/world"
 )
 
-const perlinSceneSize uint = 320
+const (
+	perlinSceneSize    uint = 768
+	perlinMaxCaveDepth      = 48
+)
 
 type perlinGenerator struct {
 	name      string
@@ -16,7 +19,7 @@ type perlinGenerator struct {
 	seed1     uint64
 	seed2     uint64
 	perm      [512]int
-	cache     *cachedSVO
+	cache     *svoSnapshot
 }
 
 const (
@@ -103,38 +106,60 @@ func (p *perlinGenerator) BuildSVO(svo *world.SVO) error {
 		return fmt.Errorf("svo is required")
 	}
 	if p.cache != nil {
-		return p.cache.apply(svo)
+		return p.cache.restore(svo)
 	}
 
 	layers := p.layers()
 	sceneScale := float64(p.sceneSize)
+	brickSize := uint(world.BrickSize)
 
-	svo.BuildTreeSparseFunc(p.sceneSize, func(add func(x, y, z uint, color uint32)) {
-		for y := uint(0); y < p.sceneSize; y++ {
-			for x := uint(0); x < p.sceneSize; x++ {
-				column := sampleTerrainColumn(float64(x), float64(y), sceneScale, layers.continent, layers.warp, layers.ridge, layers.erosion, layers.biome)
+	svo.BuildTreeSparseVolumes(p.sceneSize, func(addVoxel func(x, y, z uint, color uint32), addCube func(x, y, z, cubeSize uint, color uint32)) {
+		var blockColumns [world.BrickSize * world.BrickSize]terrainColumn
 
-				for z := 0; z <= column.surface; z++ {
-					if shouldCarveCave(float64(x), float64(y), float64(z), sceneScale, column, layers.warp, layers.cave) {
-						if z <= column.seaLevel {
-							add(x, y, uint(z), perlinPalette[perlinWaterVoxel])
+		for y0 := uint(0); y0 < p.sceneSize; y0 += brickSize {
+			for x0 := uint(0); x0 < p.sceneSize; x0 += brickSize {
+				maxColumnTop := 0
+				for localY := uint(0); localY < brickSize; localY++ {
+					for localX := uint(0); localX < brickSize; localX++ {
+						column := sampleTerrainColumn(
+							float64(x0+localX),
+							float64(y0+localY),
+							sceneScale,
+							layers.continent,
+							layers.warp,
+							layers.ridge,
+							layers.erosion,
+							layers.biome,
+						)
+						blockColumns[int(localY*brickSize+localX)] = column
+
+						columnTop := column.surface
+						if column.seaLevel > columnTop {
+							columnTop = column.seaLevel
 						}
+						if columnTop > maxColumnTop {
+							maxColumnTop = columnTop
+						}
+					}
+				}
+
+				for z0 := uint(0); z0 <= uint(maxColumnTop); z0 += brickSize {
+					if perlinBlockIsUniformWater(blockColumns[:], int(z0)) {
+						addCube(x0, y0, z0, brickSize, perlinPalette[perlinWaterVoxel])
+						continue
+					}
+					if perlinBlockIsUniformDeepSolid(blockColumns[:], int(z0)) {
+						addCube(x0, y0, z0, brickSize, perlinPalette[perlinDeepVoxel])
 						continue
 					}
 
-					add(x, y, uint(z), perlinPalette[perlinMaterialAtDepth(z, column)])
-				}
-
-				if column.surface < column.seaLevel {
-					for z := column.surface + 1; z <= column.seaLevel; z++ {
-						add(x, y, uint(z), perlinPalette[perlinWaterVoxel])
-					}
+					emitPerlinMixedBlock(addVoxel, x0, y0, z0, sceneScale, blockColumns[:], layers)
 				}
 			}
 		}
 	})
 
-	cache := captureCache(svo)
+	cache := snapshot(svo)
 	p.cache = &cache
 	return nil
 }
@@ -171,7 +196,7 @@ func sampleTerrainColumn(x, y, sceneScale float64, continentNoise, warpNoise, ri
 	rollingHills := continent * math.Pow(foothills, 1.15) * sceneScale * 0.09
 	mountainMass := math.Pow(ridge, 1.8) * math.Pow(continent, 1.35) * sceneScale * (0.14 + (1.0-erosion)*0.20)
 	microRelief := continent * alpineDetail * sceneScale * 0.035 * (0.40 + ridge*0.60)
-	basinCut := continent * (1.0-erosion) * (0.50 + (1.0-moisture)*0.50) * sceneScale * 0.03
+	basinCut := continent * (1.0 - erosion) * (0.50 + (1.0-moisture)*0.50) * sceneScale * 0.03
 
 	seaLevel := perlinSeaLevel(sceneScale)
 	oceanRelief := (foothills-0.5)*sceneScale*0.08 + (alpineDetail-0.5)*sceneScale*0.04
@@ -210,9 +235,62 @@ func perlinSeaLevel(sceneScale float64) int {
 	return int(sceneScale * 0.20)
 }
 
+func perlinBlockIsUniformWater(columns []terrainColumn, blockBaseZ int) bool {
+	blockTop := blockBaseZ + world.BrickSize - 1
+	for _, column := range columns {
+		if blockBaseZ <= column.surface || blockTop > column.seaLevel {
+			return false
+		}
+	}
+	return true
+}
+
+func perlinBlockIsUniformDeepSolid(columns []terrainColumn, blockBaseZ int) bool {
+	blockTop := blockBaseZ + world.BrickSize - 1
+	for _, column := range columns {
+		if blockTop > column.surface {
+			return false
+		}
+		depthFromSurface := column.surface - blockTop
+		if depthFromSurface <= perlinMaxCaveDepth {
+			return false
+		}
+	}
+	return true
+}
+
+func emitPerlinMixedBlock(addVoxel func(x, y, z uint, color uint32), baseX, baseY, baseZ uint, sceneScale float64, columns []terrainColumn, layers perlinNoiseLayers) {
+	for localY := 0; localY < world.BrickSize; localY++ {
+		for localX := 0; localX < world.BrickSize; localX++ {
+			worldX := baseX + uint(localX)
+			worldY := baseY + uint(localY)
+			column := columns[localY*world.BrickSize+localX]
+
+			for localZ := 0; localZ < world.BrickSize; localZ++ {
+				worldZ := int(baseZ) + localZ
+				if worldZ > column.surface {
+					if worldZ <= column.seaLevel {
+						addVoxel(worldX, worldY, uint(worldZ), perlinPalette[perlinWaterVoxel])
+					}
+					continue
+				}
+
+				if shouldCarveCave(float64(worldX), float64(worldY), float64(worldZ), sceneScale, column, layers.warp, layers.cave) {
+					if worldZ <= column.seaLevel {
+						addVoxel(worldX, worldY, uint(worldZ), perlinPalette[perlinWaterVoxel])
+					}
+					continue
+				}
+
+				addVoxel(worldX, worldY, uint(worldZ), perlinPalette[perlinMaterialAtDepth(worldZ, column)])
+			}
+		}
+	}
+}
+
 func shouldCarveCave(x, y, z, sceneScale float64, column terrainColumn, warpNoise, caveNoise *perlinGenerator) bool {
 	depthFromSurface := column.surface - int(z)
-	if depthFromSurface < 8 || int(z) < column.seaLevel/3 {
+	if depthFromSurface < 8 || depthFromSurface > perlinMaxCaveDepth || int(z) < column.seaLevel/3 {
 		return false
 	}
 	if column.ruggedness < 0.35 && depthFromSurface < 20 {

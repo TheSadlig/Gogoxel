@@ -12,25 +12,16 @@ type Generator interface {
 	BuildSVO(svo *world.SVO) error
 }
 
-type cachedSVO struct {
-	words             []uint32
-	occupiedMin       [3]uint32
-	occupiedMax       [3]uint32
-	hasOccupiedBounds bool
+type svoSnapshot struct {
+	snapshot world.Snapshot
 }
 
-func captureCache(svo *world.SVO) cachedSVO {
-	minBounds, maxBounds, ok := svo.OccupiedBounds()
-	return cachedSVO{
-		words:             svo.StorageBufferWords(),
-		occupiedMin:       minBounds,
-		occupiedMax:       maxBounds,
-		hasOccupiedBounds: ok,
-	}
+func snapshot(svo *world.SVO) svoSnapshot {
+	return svoSnapshot{snapshot: svo.Snapshot()}
 }
 
-func (c cachedSVO) apply(target *world.SVO) error {
-	return target.LoadStorageBufferWords(c.words, c.occupiedMin, c.occupiedMax, c.hasOccupiedBounds)
+func (c svoSnapshot) restore(target *world.SVO) error {
+	return target.LoadSnapshot(c.snapshot)
 }
 
 func DefaultGenerators() []Generator {
