@@ -1,4 +1,4 @@
-package automation
+package game
 
 import (
 	"encoding/json"
@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"Gogoxel/internal/platform"
+	"Gogoxel/internal/session"
 )
 
 type traceRecorder struct {
@@ -43,24 +44,24 @@ func (r *traceRecorder) recordCommand(name string, fields map[string]any) {
 
 func (r *traceRecorder) recordCamera(camera platform.Camera) {
 	r.record("camera", map[string]any{
-		"position": []float32{camera.Position[0], camera.Position[1], camera.Position[2]},
-		"yaw_deg":  camera.YawDeg,
+		"position":  []float32{camera.Position[0], camera.Position[1], camera.Position[2]},
+		"yaw_deg":   camera.YawDeg,
 		"pitch_deg": camera.PitchDeg,
-		"fov_deg":  camera.FovDeg,
+		"fov_deg":   camera.FovDeg,
 	})
 }
 
-func (r *traceRecorder) recordFrame(sample time.Duration, metrics MetricsSnapshot) {
+func (r *traceRecorder) recordFrame(sample time.Duration, metrics session.MetricsSnapshot) {
 	r.record("frame", map[string]any{
-		"frame_time_ms":              sample.Seconds() * 1000,
-		"average_fps":                metrics.AverageFPS,
-		"average_frame_time_ms":      metrics.AverageFrameTimeMs,
-		"p95_frame_time_ms":          metrics.P95FrameTimeMs,
-		"ram_bytes":                  metrics.RAMBytes,
-		"vram_bytes":                 metrics.VRAMBytes,
-		"current_generator":          metrics.CurrentGenerator,
-		"resident_brick_count":       metrics.ResidentBrickCount,
-		"streaming_pending_desired":  metrics.StreamingPendingDesiredCount,
+		"frame_time_ms":             sample.Seconds() * 1000,
+		"average_fps":               metrics.AverageFPS,
+		"average_frame_time_ms":     metrics.AverageFrameTimeMs,
+		"p95_frame_time_ms":         metrics.P95FrameTimeMs,
+		"ram_bytes":                 metrics.RAMBytes,
+		"vram_bytes":                metrics.VRAMBytes,
+		"current_generator":         metrics.CurrentGenerator,
+		"resident_brick_count":      metrics.ResidentBrickCount,
+		"streaming_pending_desired": metrics.StreamingPendingDesiredCount,
 	})
 }
 

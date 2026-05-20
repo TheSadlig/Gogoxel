@@ -3,9 +3,9 @@ package client
 import (
 	"context"
 
-	"Gogoxel/internal/automation"
 	automationpb "Gogoxel/internal/automation/pb"
 	"Gogoxel/internal/platform"
+	"Gogoxel/internal/session"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -41,10 +41,10 @@ func (c *GRPCClient) Close() error {
 	return c.conn.Close()
 }
 
-func (c *GRPCClient) GetReadiness(ctx context.Context) (automation.Readiness, error) {
+func (c *GRPCClient) GetReadiness(ctx context.Context) (session.Readiness, error) {
 	response, err := c.read.Health(ctx, &automationpb.Empty{})
 	if err != nil {
-		return automation.Readiness{}, err
+		return session.Readiness{}, err
 	}
 	return readinessFromProto(response.GetReadiness()), nil
 }
@@ -92,31 +92,31 @@ func (c *GRPCClient) ClickUI(ctx context.Context, logicalID string) error {
 	return err
 }
 
-func (c *GRPCClient) StepTicks(ctx context.Context, ticks int) (automation.StepResult, error) {
+func (c *GRPCClient) StepTicks(ctx context.Context, ticks int) (session.StepResult, error) {
 	response, err := c.control.StepTicks(ctx, &automationpb.StepTicksRequest{Ticks: uint32(ticks)})
 	if err != nil {
-		return automation.StepResult{}, err
+		return session.StepResult{}, err
 	}
-	return automation.StepResult{
+	return session.StepResult{
 		Ticks:   int(response.GetTicksExecuted()),
 		Frames:  int(response.GetFramesExecuted()),
 		Metrics: metricsFromProto(response.GetMetrics()),
 	}, nil
 }
 
-func (c *GRPCClient) StepFrames(ctx context.Context, frames int) (automation.StepResult, error) {
+func (c *GRPCClient) StepFrames(ctx context.Context, frames int) (session.StepResult, error) {
 	response, err := c.control.StepFrames(ctx, &automationpb.StepFramesRequest{Frames: uint32(frames)})
 	if err != nil {
-		return automation.StepResult{}, err
+		return session.StepResult{}, err
 	}
-	return automation.StepResult{
+	return session.StepResult{
 		Ticks:   int(response.GetTicksExecuted()),
 		Frames:  int(response.GetFramesExecuted()),
 		Metrics: metricsFromProto(response.GetMetrics()),
 	}, nil
 }
 
-func (c *GRPCClient) WaitUntilReady(ctx context.Context, criteria automation.WaitCriteria) (automation.Readiness, error) {
+func (c *GRPCClient) WaitUntilReady(ctx context.Context, criteria session.WaitCriteria) (session.Readiness, error) {
 	response, err := c.control.WaitUntilReady(ctx, &automationpb.WaitUntilReadyRequest{Criteria: &automationpb.WaitCriteria{
 		RequireRenderer:         criteria.RequireRenderer,
 		RequireSceneLoaded:      criteria.RequireSceneLoaded,
@@ -124,39 +124,39 @@ func (c *GRPCClient) WaitUntilReady(ctx context.Context, criteria automation.Wai
 		MaxTicks:                uint32(criteria.MaxTicks),
 	}})
 	if err != nil {
-		return automation.Readiness{}, err
+		return session.Readiness{}, err
 	}
 	return readinessFromProto(response.GetReadiness()), nil
 }
 
-func (c *GRPCClient) ResetMetricsWindow(ctx context.Context) (automation.MetricsSnapshot, error) {
+func (c *GRPCClient) ResetMetricsWindow(ctx context.Context) (session.MetricsSnapshot, error) {
 	response, err := c.control.ResetMetricsWindow(ctx, &automationpb.Empty{})
 	if err != nil {
-		return automation.MetricsSnapshot{}, err
+		return session.MetricsSnapshot{}, err
 	}
 	return metricsFromProto(response.GetMetrics()), nil
 }
 
-func (c *GRPCClient) GetMetrics(ctx context.Context) (automation.MetricsSnapshot, error) {
+func (c *GRPCClient) GetMetrics(ctx context.Context) (session.MetricsSnapshot, error) {
 	response, err := c.read.GetMetrics(ctx, &automationpb.Empty{})
 	if err != nil {
-		return automation.MetricsSnapshot{}, err
+		return session.MetricsSnapshot{}, err
 	}
 	return metricsFromProto(response.GetMetrics()), nil
 }
 
-func (c *GRPCClient) CaptureScreenshot(ctx context.Context, name string) (automation.ArtifactInfo, error) {
+func (c *GRPCClient) CaptureScreenshot(ctx context.Context, name string) (session.ArtifactInfo, error) {
 	response, err := c.artifacts.CaptureScreenshot(ctx, &automationpb.CaptureScreenshotRequest{ArtifactName: name})
 	if err != nil {
-		return automation.ArtifactInfo{}, err
+		return session.ArtifactInfo{}, err
 	}
 	return artifactFromProto(response.GetArtifact()), nil
 }
 
-func (c *GRPCClient) ExportTrace(ctx context.Context, name string) (automation.ArtifactInfo, error) {
+func (c *GRPCClient) ExportTrace(ctx context.Context, name string) (session.ArtifactInfo, error) {
 	response, err := c.artifacts.ExportTrace(ctx, &automationpb.ExportTraceRequest{ArtifactName: name})
 	if err != nil {
-		return automation.ArtifactInfo{}, err
+		return session.ArtifactInfo{}, err
 	}
 	return artifactFromProto(response.GetArtifact()), nil
 }
@@ -166,11 +166,11 @@ func (c *GRPCClient) Stop(ctx context.Context) error {
 	return err
 }
 
-func readinessFromProto(readiness *automationpb.Readiness) automation.Readiness {
+func readinessFromProto(readiness *automationpb.Readiness) session.Readiness {
 	if readiness == nil {
-		return automation.Readiness{}
+		return session.Readiness{}
 	}
-	return automation.Readiness{
+	return session.Readiness{
 		EngineInitialized:   readiness.GetEngineInitialized(),
 		RendererInitialized: readiness.GetRendererInitialized(),
 		SceneLoaded:         readiness.GetSceneLoaded(),
@@ -201,11 +201,11 @@ func cameraToProto(camera platform.Camera) *automationpb.Camera {
 	}
 }
 
-func metricsFromProto(metrics *automationpb.MetricsSnapshot) automation.MetricsSnapshot {
+func metricsFromProto(metrics *automationpb.MetricsSnapshot) session.MetricsSnapshot {
 	if metrics == nil {
-		return automation.MetricsSnapshot{}
+		return session.MetricsSnapshot{}
 	}
-	return automation.MetricsSnapshot{
+	return session.MetricsSnapshot{
 		Camera:                       cameraFromProto(metrics.GetCamera()),
 		CurrentGenerator:             metrics.GetCurrentGenerator(),
 		RAMBytes:                     metrics.GetRamBytes(),
@@ -228,11 +228,11 @@ func metricsFromProto(metrics *automationpb.MetricsSnapshot) automation.MetricsS
 	}
 }
 
-func artifactFromProto(artifact *automationpb.Artifact) automation.ArtifactInfo {
+func artifactFromProto(artifact *automationpb.Artifact) session.ArtifactInfo {
 	if artifact == nil {
-		return automation.ArtifactInfo{}
+		return session.ArtifactInfo{}
 	}
-	return automation.ArtifactInfo{
+	return session.ArtifactInfo{
 		Kind:          artifact.GetKind(),
 		RequestedName: artifact.GetRequestedName(),
 		Path:          artifact.GetPath(),

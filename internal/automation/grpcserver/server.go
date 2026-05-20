@@ -6,11 +6,11 @@ import (
 	"fmt"
 	"strings"
 
-	"Gogoxel/internal/automation"
 	automationpb "Gogoxel/internal/automation/pb"
 	"Gogoxel/internal/control"
 	"Gogoxel/internal/input"
 	"Gogoxel/internal/platform"
+	"Gogoxel/internal/session"
 
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc"
@@ -23,14 +23,14 @@ type Server struct {
 	automationpb.UnimplementedAutomationControlServiceServer
 	automationpb.UnimplementedAutomationArtifactServiceServer
 
-	service automation.Service
+	service session.AutomationSession
 }
 
-func New(service automation.Service) *Server {
+func New(service session.AutomationSession) *Server {
 	return &Server{service: service}
 }
 
-func Register(registrar grpc.ServiceRegistrar, service automation.Service) *Server {
+func Register(registrar grpc.ServiceRegistrar, service session.AutomationSession) *Server {
 	server := New(service)
 	automationpb.RegisterAutomationReadServiceServer(registrar, server)
 	automationpb.RegisterAutomationControlServiceServer(registrar, server)
@@ -171,9 +171,9 @@ func (s *Server) StepFrames(ctx context.Context, request *automationpb.StepFrame
 }
 
 func (s *Server) WaitUntilReady(ctx context.Context, request *automationpb.WaitUntilReadyRequest) (*automationpb.WaitUntilReadyResponse, error) {
-	criteria := automation.WaitCriteria{}
+	criteria := session.WaitCriteria{}
 	if request != nil && request.Criteria != nil {
-		criteria = automation.WaitCriteria{
+		criteria = session.WaitCriteria{
 			RequireRenderer:         request.Criteria.GetRequireRenderer(),
 			RequireSceneLoaded:      request.Criteria.GetRequireSceneLoaded(),
 			RequireStreamingSettled: request.Criteria.GetRequireStreamingSettled(),
@@ -222,7 +222,7 @@ func (s *Server) ExportTrace(ctx context.Context, request *automationpb.ExportTr
 	return &automationpb.ExportTraceResponse{Artifact: artifactToProto(artifact)}, nil
 }
 
-func readinessToProto(readiness automation.Readiness) *automationpb.Readiness {
+func readinessToProto(readiness session.Readiness) *automationpb.Readiness {
 	return &automationpb.Readiness{
 		EngineInitialized:   readiness.EngineInitialized,
 		RendererInitialized: readiness.RendererInitialized,
@@ -257,7 +257,7 @@ func cameraFromProto(camera *automationpb.Camera) (platform.Camera, error) {
 	}, nil
 }
 
-func metricsToProto(metrics automation.MetricsSnapshot) *automationpb.MetricsSnapshot {
+func metricsToProto(metrics session.MetricsSnapshot) *automationpb.MetricsSnapshot {
 	return &automationpb.MetricsSnapshot{
 		Camera:                       cameraToProto(metrics.Camera),
 		CurrentGenerator:             metrics.CurrentGenerator,
@@ -281,7 +281,7 @@ func metricsToProto(metrics automation.MetricsSnapshot) *automationpb.MetricsSna
 	}
 }
 
-func artifactToProto(artifact automation.ArtifactInfo) *automationpb.Artifact {
+func artifactToProto(artifact session.ArtifactInfo) *automationpb.Artifact {
 	return &automationpb.Artifact{
 		Kind:          artifact.Kind,
 		RequestedName: artifact.RequestedName,
@@ -347,6 +347,9 @@ func statusError(err error, metadata map[string]string) error {
 	case strings.Contains(message, "step count must be non-negative"):
 		reason = "invalid_step_count"
 		code = codes.InvalidArgument
+	case strings.Contains(message, "manual stepping requires manual automation mode"):
+		reason = "manual_step_unavailable"
+		code = codes.FailedPrecondition
 	case strings.Contains(message, "tick rate must be positive"):
 		reason = "invalid_tick_rate"
 		code = codes.InvalidArgument

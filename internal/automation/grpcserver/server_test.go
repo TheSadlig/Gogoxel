@@ -5,10 +5,11 @@ import (
 	"math"
 	"net"
 	"testing"
+	"time"
 
-	"Gogoxel/internal/automation"
 	"Gogoxel/internal/automation/client"
 	"Gogoxel/internal/control"
+	"Gogoxel/internal/game"
 	"Gogoxel/internal/platform"
 
 	"google.golang.org/grpc"
@@ -18,7 +19,7 @@ import (
 
 func TestHeadlessGRPCMovementFlow(t *testing.T) {
 	clientCtx := context.Background()
-	grpcClient, hostDone := startHeadlessServer(t)
+	grpcClient, hostDone := startServer(t, game.HostOptions{Headless: true, TickRateHz: 60, ArtifactDir: t.TempDir()})
 	defer grpcClient.Close()
 
 	if err := grpcClient.LoadGenerator(clientCtx, "Cube"); err != nil {
@@ -56,7 +57,7 @@ func TestHeadlessGRPCMovementFlow(t *testing.T) {
 }
 
 func TestHeadlessGRPCSetTickRateRejectsZero(t *testing.T) {
-	grpcClient, hostDone := startHeadlessServer(t)
+	grpcClient, hostDone := startServer(t, game.HostOptions{Headless: true, TickRateHz: 60, ArtifactDir: t.TempDir()})
 	defer grpcClient.Close()
 
 	err := grpcClient.SetTickRate(context.Background(), 0)
@@ -73,7 +74,7 @@ func TestHeadlessGRPCSetTickRateRejectsZero(t *testing.T) {
 }
 
 func TestHeadlessGRPCCaptureScreenshotRequiresRenderer(t *testing.T) {
-	grpcClient, hostDone := startHeadlessServer(t)
+	grpcClient, hostDone := startServer(t, game.HostOptions{Headless: true, TickRateHz: 60, ArtifactDir: t.TempDir()})
 	defer grpcClient.Close()
 
 	if err := grpcClient.LoadGenerator(context.Background(), "Cube"); err != nil {
@@ -92,9 +93,58 @@ func TestHeadlessGRPCCaptureScreenshotRequiresRenderer(t *testing.T) {
 	}
 }
 
-func startHeadlessServer(t *testing.T) (*client.GRPCClient, <-chan error) {
+func TestHeadlessLiveGRPCRejectsManualStepAndContinuesRunning(t *testing.T) {
+	grpcClient, hostDone := startServer(t, game.HostOptions{Headless: true, Live: true, TickRateHz: 120, ArtifactDir: t.TempDir()})
+	defer grpcClient.Close()
+
+	callCtx, cancelCall := context.WithTimeout(context.Background(), time.Second)
+	defer cancelCall()
+	if err := grpcClient.LoadGenerator(callCtx, "Cube"); err != nil {
+		t.Fatalf("LoadGenerator() error = %v", err)
+	}
+	if err := grpcClient.SetCamera(callCtx, platform.Camera{
+		Position: [3]float32{0, 0, 0},
+		YawDeg:   0,
+		PitchDeg: 0,
+		FovDeg:   60,
+	}); err != nil {
+		t.Fatalf("SetCamera() error = %v", err)
+	}
+	if err := grpcClient.PressAction(callCtx, string(control.ActionMoveForward)); err != nil {
+		t.Fatalf("PressAction() error = %v", err)
+	}
+
+	_, err := grpcClient.StepTicks(callCtx, 1)
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("StepTicks() code = %v, want %v (err=%v)", status.Code(err), codes.FailedPrecondition, err)
+	}
+
+	deadline := time.Now().Add(time.Second)
+	for {
+		camera, err := grpcClient.GetCamera(callCtx)
+		if err != nil {
+			t.Fatalf("GetCamera() error = %v", err)
+		}
+		if camera.Position[0] >= 0.5 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("camera X = %f, want at least 0.5 while live session is running", camera.Position[0])
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	if stopErr := grpcClient.Stop(context.Background()); stopErr != nil {
+		t.Fatalf("Stop() error = %v", stopErr)
+	}
+	if err := <-hostDone; err != nil {
+		t.Fatalf("host.Run() error = %v", err)
+	}
+}
+
+func startServer(t *testing.T, options game.HostOptions) (*client.GRPCClient, <-chan error) {
 	t.Helper()
-	host := automation.NewHost(automation.Options{Headless: true, TickRateHz: 60, ArtifactDir: t.TempDir()})
+	host := game.NewHost(options)
 	hostCtx, cancelHost := context.WithCancel(context.Background())
 	hostDone := make(chan error, 1)
 	go func() {

@@ -7,14 +7,15 @@ Feature: Renderer artifacts over automation gRPC
     And the simulation tick rate is 60 Hz
     And the generator "<generator>" is loaded
     And the automation session becomes render-ready
+    And I advance the simulation by <frames> frames
     When I capture the screenshot artifact "<artifact>"
     Then the screenshot artifact should exist
 
     Examples:
-      | generator             | artifact             |
-      | Cube                  | cube                 |
-      | Perlin Terrain        | perlin-terrain       |
-      | monu1                 | monu1                |
-      | monu6 without water   | monu6-without-water  |
-      | monu8 without water   | monu8-without-water  |
-      | buddha 16k            | buddha-16k           |
+      | generator             | artifact             | frames |
+      | Cube                  | cube                 | 30     | 
+      | Perlin Terrain        | perlin-terrain       | 500    | 
+      | monu1                 | monu1                | 30     | 
+      | monu6 without water   | monu6-without-water  | 30     | 
+      | monu8 without water   | monu8-without-water  | 30     | 
+      | buddha 16k            | buddha-16k           | 30     | 

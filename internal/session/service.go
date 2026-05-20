@@ -1,4 +1,4 @@
-package automation
+package session
 
 import (
 	"context"
@@ -7,13 +7,6 @@ import (
 	"Gogoxel/internal/input"
 	"Gogoxel/internal/platform"
 )
-
-type Options struct {
-	Headless     bool
-	HiddenWindow bool
-	TickRateHz   int
-	ArtifactDir  string
-}
 
 type Readiness struct {
 	EngineInitialized   bool
@@ -31,25 +24,25 @@ type WaitCriteria struct {
 }
 
 type MetricsSnapshot struct {
-	Camera                      platform.Camera
-	CurrentGenerator            string
-	RAMBytes                    uint64
-	VRAMBytes                   uint64
-	ChunkRAMBytes               uint64
-	NodeCount                   int
-	BrickCount                  int
-	WorldSize                   uint
-	ResidentBrickCount          int
-	StreamingDesiredReady       bool
+	Camera                       platform.Camera
+	CurrentGenerator             string
+	RAMBytes                     uint64
+	VRAMBytes                    uint64
+	ChunkRAMBytes                uint64
+	NodeCount                    int
+	BrickCount                   int
+	WorldSize                    uint
+	ResidentBrickCount           int
+	StreamingDesiredReady        bool
 	StreamingPendingDesiredCount int
-	StreamingResidentLimit      int
-	StreamingUploadBudget       int
-	PresentMode                 string
-	RendererDevice              string
-	AverageFPS                  float64
-	AverageFrameTimeMs          float64
-	P95FrameTimeMs              float64
-	FrameSampleCount            int
+	StreamingResidentLimit       int
+	StreamingUploadBudget        int
+	PresentMode                  string
+	RendererDevice               string
+	AverageFPS                   float64
+	AverageFrameTimeMs           float64
+	P95FrameTimeMs               float64
+	FrameSampleCount             int
 }
 
 type ArtifactInfo struct {
@@ -65,7 +58,7 @@ type StepResult struct {
 	Metrics MetricsSnapshot
 }
 
-type Service interface {
+type AutomationSession interface {
 	GetReadiness(context.Context) (Readiness, error)
 	Reset(context.Context) error
 	LoadGenerator(context.Context, string) error
@@ -83,27 +76,6 @@ type Service interface {
 	CaptureScreenshot(context.Context, string) (ArtifactInfo, error)
 	ExportTrace(context.Context, string) (ArtifactInfo, error)
 	Stop(context.Context) error
-}
-
-func normalizeOptions(options Options) Options {
-	if options.TickRateHz <= 0 {
-		options.TickRateHz = 60
-	}
-	if options.Headless {
-		options.HiddenWindow = false
-	}
-	if options.ArtifactDir == "" {
-		options.ArtifactDir = "artifacts/automation"
-	}
-	return options
-}
-
-func defaultWaitCriteria() WaitCriteria {
-	return WaitCriteria{
-		RequireSceneLoaded:      true,
-		RequireStreamingSettled: true,
-		MaxTicks:                600,
-	}
 }
 
 func (m MetricsSnapshot) FrameWindowDuration() time.Duration {

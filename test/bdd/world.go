@@ -18,9 +18,9 @@ import (
 	"sync"
 	"time"
 
-	"Gogoxel/internal/automation"
 	automationclient "Gogoxel/internal/automation/client"
 	"Gogoxel/internal/platform"
+	"Gogoxel/internal/session"
 
 	"github.com/cucumber/godog"
 	"google.golang.org/grpc"
@@ -37,13 +37,13 @@ type automationDriver interface {
 	GetCamera(context.Context) (platform.Camera, error)
 	PressAction(context.Context, string) error
 	ReleaseAction(context.Context, string) error
-	StepTicks(context.Context, int) (automation.StepResult, error)
-	StepFrames(context.Context, int) (automation.StepResult, error)
-	WaitUntilReady(context.Context, automation.WaitCriteria) (automation.Readiness, error)
-	ResetMetricsWindow(context.Context) (automation.MetricsSnapshot, error)
-	GetMetrics(context.Context) (automation.MetricsSnapshot, error)
-	CaptureScreenshot(context.Context, string) (automation.ArtifactInfo, error)
-	ExportTrace(context.Context, string) (automation.ArtifactInfo, error)
+	StepTicks(context.Context, int) (session.StepResult, error)
+	StepFrames(context.Context, int) (session.StepResult, error)
+	WaitUntilReady(context.Context, session.WaitCriteria) (session.Readiness, error)
+	ResetMetricsWindow(context.Context) (session.MetricsSnapshot, error)
+	GetMetrics(context.Context) (session.MetricsSnapshot, error)
+	CaptureScreenshot(context.Context, string) (session.ArtifactInfo, error)
+	ExportTrace(context.Context, string) (session.ArtifactInfo, error)
 	Stop(context.Context) error
 	Close() error
 }
@@ -55,10 +55,13 @@ type startupResult struct {
 }
 
 type sessionMode string
+type sessionRunMode string
 
 const (
 	sessionModeHeadless     sessionMode = "headless"
 	sessionModeHiddenWindow sessionMode = "hidden-window"
+	sessionRunModeManual    sessionRunMode = "manual"
+	sessionRunModeLive      sessionRunMode = "live"
 
 	defaultRPCDeadline = 10 * time.Second
 	generatorLoadTimeout = 60 * time.Second
@@ -80,12 +83,13 @@ type scenarioHarness struct {
 	artifactDir    string
 	artifactSubdir string
 	lastCamera     platform.Camera
-	lastReadiness  automation.Readiness
-	lastMetrics    automation.MetricsSnapshot
-	lastStep       automation.StepResult
-	lastScreenshot automation.ArtifactInfo
-	lastTrace      automation.ArtifactInfo
+	lastReadiness  session.Readiness
+	lastMetrics    session.MetricsSnapshot
+	lastStep       session.StepResult
+	lastScreenshot session.ArtifactInfo
+	lastTrace      session.ArtifactInfo
 	mode           sessionMode
+	runMode        sessionRunMode
 	address        string
 	cleanupArtifacts bool
 	autoTraceName  string
@@ -112,6 +116,7 @@ func InitializeScenario(ctx *godog.ScenarioContext) {
 
 	ctx.Step(`^an automation session is started in headless mode$`, harness.startHeadless)
 	ctx.Step(`^an automation session is started in hidden-window mode$`, harness.startHiddenWindow)
+	ctx.Step(`^a live automation session is started in headless mode$`, harness.startLiveHeadless)
 	ctx.Step(`^the engine is reset to a clean state$`, harness.resetEngine)
 	ctx.Step(`^the simulation tick rate is (\d+) Hz$`, harness.setTickRate)
 	ctx.Step(`^the generator "([^"]+)" is loaded$`, harness.loadGenerator)
@@ -123,6 +128,7 @@ func InitializeScenario(ctx *godog.ScenarioContext) {
 	ctx.Step(`^the automation session becomes render-ready$`, harness.waitForRendererReady)
 	ctx.Step(`^I reset the metrics window$`, harness.resetMetricsWindow)
 	ctx.Step(`^the camera x position should be approximately (-?\d+(?:\.\d+)?) within (\d+(?:\.\d+)?)$`, harness.expectCameraX)
+	ctx.Step(`^the camera x position should eventually be above (-?\d+(?:\.\d+)?) within (\d+(?:\.\d+)?) seconds$`, harness.expectCameraXEventuallyAbove)
 	ctx.Step(`^the metrics window should contain at least (\d+) samples$`, harness.expectMetricSamples)
 	ctx.Step(`^the average FPS should be above (\d+(?:\.\d+)?)$`, harness.expectAverageFPS)
 	ctx.Step(`^the renderer device name should not be empty$`, harness.expectRendererDevice)
@@ -134,17 +140,21 @@ func InitializeScenario(ctx *godog.ScenarioContext) {
 }
 
 func (h *scenarioHarness) startHeadless() error {
-	return h.startSession(sessionModeHeadless)
+	return h.startSession(sessionModeHeadless, sessionRunModeManual)
 }
 
 func (h *scenarioHarness) startHiddenWindow() error {
 	if strings.TrimSpace(os.Getenv("GOGOXEL_BDD_GPU")) == "" {
 		return godog.ErrSkip
 	}
-	return h.startSession(sessionModeHiddenWindow)
+	return h.startSession(sessionModeHiddenWindow, sessionRunModeManual)
 }
 
-func (h *scenarioHarness) startSession(mode sessionMode) error {
+func (h *scenarioHarness) startLiveHeadless() error {
+	return h.startSession(sessionModeHeadless, sessionRunModeLive)
+}
+
+func (h *scenarioHarness) startSession(mode sessionMode, runMode sessionRunMode) error {
 	if h.driver != nil {
 		return fmt.Errorf("automation session is already running")
 	}
@@ -161,7 +171,16 @@ func (h *scenarioHarness) startSession(mode sessionMode) error {
 		cleanupScenarioArtifacts(artifactDir, cleanupArtifacts)
 		return err
 	}
-	args := []string{"--automation", "--listen", address, "--artifact-dir", artifactDir}
+	args := []string{"--artifact-dir", artifactDir}
+	switch runMode {
+	case sessionRunModeManual:
+		args = append(args, "--automation", "--listen", address)
+	case sessionRunModeLive:
+		args = append(args, "--automation-listen", address)
+	default:
+		cleanupScenarioArtifacts(artifactDir, cleanupArtifacts)
+		return fmt.Errorf("unsupported automation run mode %q", runMode)
+	}
 	switch mode {
 	case sessionModeHeadless:
 		args = append(args, "--headless")
@@ -197,6 +216,7 @@ func (h *scenarioHarness) startSession(mode sessionMode) error {
 	h.command = command
 	h.artifactDir = artifactDir
 	h.mode = mode
+	h.runMode = runMode
 	h.address = address
 	h.cleanupArtifacts = cleanupArtifacts
 	h.closed = false
@@ -334,6 +354,9 @@ func (h *scenarioHarness) releaseAction(action string) error {
 }
 
 func (h *scenarioHarness) advanceTicks(ticks int) error {
+	if h.runMode == sessionRunModeLive {
+		return fmt.Errorf("advancing the simulation by ticks is only available in manual automation sessions")
+	}
 	ctx, cancel := rpcContext()
 	defer cancel()
 	result, err := h.driver.StepTicks(ctx, ticks)
@@ -346,6 +369,9 @@ func (h *scenarioHarness) advanceTicks(ticks int) error {
 }
 
 func (h *scenarioHarness) advanceFrames(frames int) error {
+	if h.runMode == sessionRunModeLive {
+		return fmt.Errorf("advancing the simulation by frames is only available in manual automation sessions")
+	}
 	ctx, cancel := rpcContext()
 	defer cancel()
 	result, err := h.driver.StepFrames(ctx, frames)
@@ -360,7 +386,7 @@ func (h *scenarioHarness) advanceFrames(frames int) error {
 func (h *scenarioHarness) waitForRendererReady() error {
 	ctx, cancel := context.WithTimeout(context.Background(), startupTimeout)
 	defer cancel()
-	readiness, err := h.driver.WaitUntilReady(ctx, automation.WaitCriteria{
+	readiness, err := h.driver.WaitUntilReady(ctx, session.WaitCriteria{
 		RequireRenderer:    true,
 		RequireSceneLoaded: true,
 		MaxTicks:           600,
@@ -396,6 +422,30 @@ func (h *scenarioHarness) expectCameraX(expected, tolerance float64) error {
 		return fmt.Errorf("expected camera x to be %.3f +/- %.3f, got %.3f", expected, tolerance, actual)
 	}
 	return nil
+}
+
+func (h *scenarioHarness) expectCameraXEventuallyAbove(minimum, withinSeconds float64) error {
+	if withinSeconds <= 0 {
+		return fmt.Errorf("withinSeconds must be positive")
+	}
+	deadline := time.Now().Add(time.Duration(withinSeconds * float64(time.Second)))
+	for {
+		ctx, cancel := rpcContext()
+		camera, err := h.driver.GetCamera(ctx)
+		cancel()
+		if err != nil {
+			return err
+		}
+		h.lastCamera = camera
+		actual := float64(camera.Position[0])
+		if actual > minimum {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("expected camera x to eventually exceed %.3f within %.3f seconds, got %.3f", minimum, withinSeconds, actual)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 func (h *scenarioHarness) expectMetricSamples(minimum int) error {
@@ -503,12 +553,12 @@ func (h *scenarioHarness) expectTraceContains(fragment string) error {
 	return nil
 }
 
-func (h *scenarioHarness) refreshMetrics() (automation.MetricsSnapshot, error) {
+func (h *scenarioHarness) refreshMetrics() (session.MetricsSnapshot, error) {
 	ctx, cancel := rpcContext()
 	defer cancel()
 	metrics, err := h.driver.GetMetrics(ctx)
 	if err != nil {
-		return automation.MetricsSnapshot{}, err
+		return session.MetricsSnapshot{}, err
 	}
 	h.lastMetrics = metrics
 	return metrics, nil

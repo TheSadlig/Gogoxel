@@ -15,7 +15,14 @@ import (
 
 const windowTitle = "Gogoxel Vulkan"
 
+type Options struct {
+	Headless     bool
+	HiddenWindow bool
+	TickRateHz   int
+}
+
 type Game struct {
+	options  Options
 	window   *platform.Window
 	renderer *vulkan.Renderer
 	core     *engine.Core
@@ -31,11 +38,30 @@ type Game struct {
 	loadedSceneVersion uint64
 }
 
-func New() *Game {
+func New(options Options) *Game {
+	options = normalizeOptions(options)
 	return &Game{
-		core:                engine.NewCore(engine.DefaultGeneratorCatalog(), engine.Config{}),
+		options:             options,
+		core:                engine.NewCore(engine.DefaultGeneratorCatalog(), engine.Config{TickRateHz: options.TickRateHz}),
 		externalHeldActions: make(input.Snapshot),
 	}
+}
+
+func normalizeOptions(options Options) Options {
+	if options.TickRateHz <= 0 {
+		options.TickRateHz = 60
+	}
+	if options.Headless {
+		options.HiddenWindow = false
+	}
+	return options
+}
+
+func (g *Game) Start() error {
+	if g == nil || g.options.Headless {
+		return nil
+	}
+	return g.InitWindowed(g.options.HiddenWindow)
 }
 
 func (g *Game) InitWindowed(hiddenWindow bool) error {
@@ -155,7 +181,7 @@ func (g *Game) InitChunk() error {
 }
 
 func (g *Game) Run() error {
-	if err := g.InitWindowed(false); err != nil {
+	if err := g.Start(); err != nil {
 		return err
 	}
 	defer g.Close()
@@ -176,7 +202,7 @@ func (g *Game) Run() error {
 		if err := g.StepFrame(delta); err != nil {
 			return err
 		}
-		g.recordFrame(delta)
+		g.RecordFrame(delta)
 	}
 
 	return nil
@@ -212,6 +238,20 @@ func (g *Game) RequestClose() {
 	if g.window != nil {
 		g.window.RequestClose()
 	}
+}
+
+func (g *Game) PollEvents() {
+	if g == nil || g.window == nil {
+		return
+	}
+	g.window.PollEvents()
+}
+
+func (g *Game) IsIconified() bool {
+	if g == nil || g.window == nil {
+		return false
+	}
+	return g.window.IsIconified()
 }
 
 func (g *Game) SetTickRateHz(rate int) {
@@ -358,7 +398,7 @@ func (g *Game) Update(delta time.Duration) error {
 	return nil
 }
 
-func (g *Game) recordFrame(delta time.Duration) {
+func (g *Game) RecordFrame(delta time.Duration) {
 	g.fpsFrames++
 	g.fpsElapsed += delta
 
