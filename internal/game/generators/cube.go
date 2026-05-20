@@ -11,7 +11,7 @@ type cubeGenerator struct {
 	sceneSize uint
 	cubeSize  uint
 	color     uint32
-	cache     *cachedSVO
+	cache     *svoSnapshot
 }
 
 func NewCubeGenerator(name string, sceneSize, cubeSize uint, color uint32) Generator {
@@ -36,11 +36,11 @@ func (g *cubeGenerator) BuildSVO(svo *world.SVO) error {
 		return fmt.Errorf("svo is required")
 	}
 	if g.cache != nil {
-		return g.cache.apply(svo)
+		return g.cache.restore(svo)
 	}
 
 	sceneSize := int(g.sceneSize)
-	cubeSize := minInt(int(g.cubeSize), sceneSize)
+	cubeSize := min(int(g.cubeSize), sceneSize)
 	start := (sceneSize - cubeSize) / 2
 	end := start + cubeSize
 
@@ -54,7 +54,7 @@ func (g *cubeGenerator) BuildSVO(svo *world.SVO) error {
 		}
 	})
 
-	cache := captureCache(svo)
+	cache := snapshot(svo)
 	g.cache = &cache
 	return nil
 }

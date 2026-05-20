@@ -28,10 +28,16 @@ func (f *Frame) BeginRenderPass() {
 		return
 	}
 
+	clearValues := []vk.ClearValue{
+		vk.NewClearValue([]float32{0.66, 0.78, 0.93, 1.0}),
+	}
+
 	renderPassInfo := vk.RenderPassBeginInfo{
-		SType:       vk.StructureTypeRenderPassBeginInfo,
-		RenderPass:  f.renderer.renderPass,
-		Framebuffer: f.renderer.swapchainFramebuffers[f.ImageIndex],
+		SType:           vk.StructureTypeRenderPassBeginInfo,
+		RenderPass:      f.renderer.renderPass,
+		Framebuffer:     f.renderer.swapchainFramebuffers[f.ImageIndex],
+		ClearValueCount: uint32(len(clearValues)),
+		PClearValues:    clearValues,
 		RenderArea: vk.Rect2D{
 			Offset: vk.Offset2D{X: 0, Y: 0},
 			Extent: f.renderer.swapchainExtent,

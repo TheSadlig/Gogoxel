@@ -17,14 +17,28 @@ type brickPool struct {
 	image       vk.Image
 	imageMemory vk.DeviceMemory
 	imageView   vk.ImageView
-	sampler     vk.Sampler
-	allocated   []bool
-	imageBytes  vk.DeviceSize
+
+	// allocated[slot] mirrors the free-list for double-free / bounds safety.
+	allocated []bool
+	// freeList is a LIFO stack of free slot indices. Allocate pops; Free pushes.
+	// O(1) for both operations vs. the previous O(brickPoolCapacity) linear scan.
+	freeList []uint32
+
+	imageBytes vk.DeviceSize
 }
 
 func (r *Renderer) createBrickPool() (*brickPool, error) {
-	pool := &brickPool{allocated: make([]bool, brickPoolCapacity)}
+	pool := &brickPool{
+		allocated: make([]bool, brickPoolCapacity),
+		// Pre-size the free list. Slot 0 is reserved for air; push slots in
+		// descending order so Allocate hands them out in ascending order
+		// (preserves prior behaviour for tests).
+		freeList: make([]uint32, 0, brickPoolCapacity-1),
+	}
 	pool.allocated[0] = true
+	for slot := brickPoolCapacity - 1; slot >= 1; slot-- {
+		pool.freeList = append(pool.freeList, slot)
+	}
 
 	imageCreateInfo := vk.ImageCreateInfo{
 		SType:     vk.StructureTypeImageCreateInfo,
@@ -53,14 +67,15 @@ func (r *Renderer) createBrickPool() (*brickPool, error) {
 	vk.GetImageMemoryRequirements(r.device, pool.image, &imageRequirements)
 	imageRequirements.Deref()
 
-	var memoryProperties vk.PhysicalDeviceMemoryProperties
-	vk.GetPhysicalDeviceMemoryProperties(r.physicalDevice, &memoryProperties)
-	memoryProperties.Deref()
-
-	memoryTypeIndex, err := findMemoryTypeIndex(memoryProperties, imageRequirements.MemoryTypeBits, vk.MemoryPropertyFlags(vk.MemoryPropertyDeviceLocalBit))
+	memoryTypeIndex, err := findMemoryTypeIndex(r.memoryProperties, imageRequirements.MemoryTypeBits, vk.MemoryPropertyFlags(vk.MemoryPropertyDeviceLocalBit))
 	if err != nil {
-		pool.Close(r.device)
-		return nil, fmt.Errorf("finding brick pool image memory type: %w", err)
+		// UMA / integrated GPUs may expose only host-visible memory. Mirror the
+		// SSBO fallback so the brick pool still allocates on those devices.
+		memoryTypeIndex, err = findMemoryTypeIndex(r.memoryProperties, imageRequirements.MemoryTypeBits, vk.MemoryPropertyFlags(vk.MemoryPropertyHostVisibleBit))
+		if err != nil {
+			pool.Close(r.device)
+			return nil, fmt.Errorf("finding brick pool image memory type: %w", err)
+		}
 	}
 
 	allocateInfo := vk.MemoryAllocateInfo{
@@ -105,31 +120,6 @@ func (r *Renderer) createBrickPool() (*brickPool, error) {
 	}); err != nil {
 		pool.Close(r.device)
 		return nil, fmt.Errorf("creating brick pool image view: %w", err)
-	}
-
-	samplerCreateInfo := vk.SamplerCreateInfo{
-		SType:                   vk.StructureTypeSamplerCreateInfo,
-		MagFilter:               vk.FilterNearest,
-		MinFilter:               vk.FilterNearest,
-		MipmapMode:              vk.SamplerMipmapModeNearest,
-		AddressModeU:            vk.SamplerAddressModeClampToEdge,
-		AddressModeV:            vk.SamplerAddressModeClampToEdge,
-		AddressModeW:            vk.SamplerAddressModeClampToEdge,
-		MipLodBias:              0,
-		AnisotropyEnable:        vk.False,
-		MaxAnisotropy:           1,
-		CompareEnable:           vk.False,
-		CompareOp:               vk.CompareOpAlways,
-		MinLod:                  0,
-		MaxLod:                  0,
-		BorderColor:             vk.BorderColorIntOpaqueBlack,
-		UnnormalizedCoordinates: vk.False,
-	}
-	if err := withPinnedValue(&pool.sampler, func() error {
-		return vk.Error(vk.CreateSampler(r.device, &samplerCreateInfo, nil, &pool.sampler))
-	}); err != nil {
-		pool.Close(r.device)
-		return nil, fmt.Errorf("creating brick pool sampler: %w", err)
 	}
 
 	if err := r.clearBrickPoolImage(pool.image); err != nil {
@@ -203,23 +193,25 @@ func (pool *brickPool) Allocate() (uint32, error) {
 	if pool == nil {
 		return 0, fmt.Errorf("brick pool is nil")
 	}
-
-	for slot := uint32(1); slot < brickPoolCapacity; slot++ {
-		if pool.allocated[slot] {
-			continue
-		}
-		pool.allocated[slot] = true
-		return slot, nil
+	if len(pool.freeList) == 0 {
+		return 0, fmt.Errorf("brick pool exhausted")
 	}
-
-	return 0, fmt.Errorf("brick pool exhausted")
+	slot := pool.freeList[len(pool.freeList)-1]
+	pool.freeList = pool.freeList[:len(pool.freeList)-1]
+	pool.allocated[slot] = true
+	return slot, nil
 }
 
 func (pool *brickPool) Free(slot uint32) {
 	if pool == nil || slot == 0 || slot >= brickPoolCapacity {
 		return
 	}
+	if !pool.allocated[slot] {
+		// Double-free guard: do nothing.
+		return
+	}
 	pool.allocated[slot] = false
+	pool.freeList = append(pool.freeList, slot)
 }
 
 func brickPoolSlotCoord(slot uint32) (uint32, uint32, uint32, error) {
@@ -243,9 +235,6 @@ func brickPoolCoordSlot(x, y, z uint32) (uint32, error) {
 func (pool *brickPool) Close(device vk.Device) {
 	if pool == nil {
 		return
-	}
-	if !isZeroValue(pool.sampler) {
-		vk.DestroySampler(device, pool.sampler, nil)
 	}
 	if !isZeroValue(pool.imageView) {
 		vk.DestroyImageView(device, pool.imageView, nil)

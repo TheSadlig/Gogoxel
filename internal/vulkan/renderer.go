@@ -54,6 +54,15 @@ type Renderer struct {
 	currentFrame             int
 	frameReleases            [][]func()
 
+	// memoryProperties is cached once after physical-device selection so
+	// hot paths (staging allocation) don't re-query Vulkan every call.
+	memoryProperties vk.PhysicalDeviceMemoryProperties
+
+	// stagingRings provides one persistent host-coherent staging buffer per
+	// in-flight frame slot. Sub-allocations are bump-pointer; the offset is
+	// reset whenever the slot's fence has been waited on.
+	stagingRings [maxFramesInFlight]*stagingRing
+
 	instanceExtensions []string
 }
 
@@ -124,6 +133,9 @@ func (r *Renderer) initVulkan() error {
 	if err := r.createSyncObjects(); err != nil {
 		return err
 	}
+	if err := r.initStagingRings(); err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -180,6 +192,8 @@ func (r *Renderer) pickPhysicalDevice() error {
 		r.physicalDevice = device
 		r.graphicsQueueIndex = indices.graphics
 		r.presentQueueIndex = indices.present
+		vk.GetPhysicalDeviceMemoryProperties(device, &r.memoryProperties)
+		r.memoryProperties.Deref()
 		fmt.Printf("[vulkan] physical device: %s\n", physicalDeviceName(device))
 		return nil
 	}
@@ -365,6 +379,7 @@ func (r *Renderer) cleanupVulkan() {
 	for frameSlot := range r.frameReleases {
 		r.runDeferredReleases(frameSlot)
 	}
+	r.destroyStagingRings()
 
 	for _, semaphore := range r.imageAvailableSemaphores {
 		if !isZeroValue(semaphore) {
@@ -421,5 +436,6 @@ func (r *Renderer) runDeferredReleases(frameSlot int) {
 	for _, release := range r.frameReleases[frameSlot] {
 		release()
 	}
-	r.frameReleases[frameSlot] = nil
+	r.frameReleases[frameSlot] = r.frameReleases[frameSlot][:0]
+	r.resetStagingRing(frameSlot)
 }

@@ -85,6 +85,52 @@ func TestBuildTreeSparseFuncTracksOccupiedBounds(t *testing.T) {
 	}
 }
 
+func TestBuildTreeSparseVolumesMatchesVoxelBuild(t *testing.T) {
+	voxelBuilt := NewSVO()
+	voxelBuilt.BuildTreeSparseFunc(16, func(add func(x, y, z uint, color uint32)) {
+		for z := uint(0); z < 8; z++ {
+			for y := uint(0); y < 8; y++ {
+				for x := uint(0); x < 8; x++ {
+					add(x, y, z, 0x884422)
+				}
+			}
+		}
+		add(11, 10, 9, 0x33AA77)
+	})
+
+	volumeBuilt := NewSVO()
+	volumeBuilt.BuildTreeSparseVolumes(16, func(addVoxel func(x, y, z uint, color uint32), addCube func(x, y, z, cubeSize uint, color uint32)) {
+		addCube(0, 0, 0, 8, 0x884422)
+		addVoxel(11, 10, 9, 0x33AA77)
+	})
+
+	voxelWords := voxelBuilt.StorageBufferWords()
+	volumeWords := volumeBuilt.StorageBufferWords()
+	if len(voxelWords) != len(volumeWords) {
+		t.Fatalf("len(StorageBufferWords) = %d, want %d", len(volumeWords), len(voxelWords))
+	}
+	for index := range voxelWords {
+		if voxelWords[index] != volumeWords[index] {
+			t.Fatalf("StorageBufferWords()[%d] = %#x, want %#x", index, volumeWords[index], voxelWords[index])
+		}
+	}
+
+	if got, want := volumeBuilt.BrickCount(), voxelBuilt.BrickCount(); got != want {
+		t.Fatalf("BrickCount() = %d, want %d", got, want)
+	}
+	gotMin, gotMax, gotOK := volumeBuilt.OccupiedBounds()
+	wantMin, wantMax, wantOK := voxelBuilt.OccupiedBounds()
+	if gotOK != wantOK {
+		t.Fatalf("OccupiedBounds ok = %t, want %t", gotOK, wantOK)
+	}
+	if gotMin != wantMin {
+		t.Fatalf("OccupiedBounds min = %v, want %v", gotMin, wantMin)
+	}
+	if gotMax != wantMax {
+		t.Fatalf("OccupiedBounds max = %v, want %v", gotMax, wantMax)
+	}
+}
+
 func TestBuildTreeCreatesBrickLeafAtSizeEight(t *testing.T) {
 	svo := NewSVO()
 	svo.BuildTreeSparseFunc(16, func(add func(x, y, z uint, color uint32)) {

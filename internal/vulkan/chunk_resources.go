@@ -84,7 +84,7 @@ func (r *Renderer) CreateChunkResourcesFromSVO(chunkBindings *ChunkBindings, svo
 		chunk.Close()
 		return nil, err
 	}
-	chunk.streamer = newBrickStreamer(svo.Bricks())
+	chunk.streamer = newBrickStreamer(svo.BricksRef())
 
 	return chunk, nil
 }
@@ -244,7 +244,7 @@ func (r *Renderer) createChunkDescriptorSet(chunkBindings *ChunkBindings, chunk 
 
 	poolSizes := []vk.DescriptorPoolSize{
 		{Type: vk.DescriptorTypeStorageBuffer, DescriptorCount: 1},
-		{Type: vk.DescriptorTypeCombinedImageSampler, DescriptorCount: 1},
+		{Type: vk.DescriptorTypeSampledImage, DescriptorCount: 1},
 	}
 	poolCreateInfo := vk.DescriptorPoolCreateInfo{
 		SType:         vk.StructureTypeDescriptorPoolCreateInfo,
@@ -277,7 +277,6 @@ func (r *Renderer) createChunkDescriptorSet(chunkBindings *ChunkBindings, chunk 
 		Range:  chunk.bufferBytes,
 	}}
 	imageInfos := []vk.DescriptorImageInfo{{
-		Sampler:     chunk.brickPool.sampler,
 		ImageView:   chunk.brickPool.imageView,
 		ImageLayout: vk.ImageLayoutShaderReadOnlyOptimal,
 	}}
@@ -295,7 +294,7 @@ func (r *Renderer) createChunkDescriptorSet(chunkBindings *ChunkBindings, chunk 
 			DstSet:          chunk.DescriptorSet,
 			DstBinding:      1,
 			DescriptorCount: 1,
-			DescriptorType:  vk.DescriptorTypeCombinedImageSampler,
+			DescriptorType:  vk.DescriptorTypeSampledImage,
 			PImageInfo:      imageInfos,
 		},
 	}
@@ -312,7 +311,7 @@ func (chunk *ChunkResources) RAMBytes() uint64 {
 }
 
 func (chunk *ChunkResources) VRAMBytes() uint64 {
-	return 0
+	return chunk.GPUBytes()
 }
 
 func (r *Renderer) SubmitOneTimeCommands(record func(vk.CommandBuffer) error) error {

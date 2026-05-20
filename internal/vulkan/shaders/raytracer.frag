@@ -1,4 +1,5 @@
 #version 450
+#extension GL_EXT_samplerless_texture_functions : require
 
 layout(location = 0) in vec2 uv;
 layout(push_constant) uniform CameraBlock {
@@ -15,7 +16,7 @@ layout(push_constant) uniform CameraBlock {
 layout(location = 0) out vec4 outColor;
 
 struct SVONode {
-    uint childMaskAndColor;
+    uint payload;
     uint childPointer;
 };
 
@@ -25,7 +26,9 @@ layout(std430, binding = 0) readonly buffer SVOBuffer {
     uint rawWords[];
 } svo;
 
-layout(binding = 1) uniform usampler3D brickPoolTexture;
+// Brick pool is accessed via texelFetch only (integer coordinates, no filtering),
+// so it is bound as a sampled image (utexture3D) rather than a combined-image-sampler.
+layout(binding = 1) uniform utexture3D brickPoolTexture;
 
 const int MaxStackDepth = 24;
 const int MaxMacroSteps = 500;
@@ -77,21 +80,21 @@ vec3 axisNormal(uint axis, vec3 rd) {
 SVONode getSvoNode(uint index) {
     SVONode node;
     uint baseWord = index * 2u;
-    node.childMaskAndColor = svo.rawWords[baseWord];
+    node.payload = svo.rawWords[baseWord];
     node.childPointer = svo.rawWords[baseWord + 1u];
     return node;
 }
 
 uint nodeChildMask(SVONode node) {
-    return node.childMaskAndColor & ChildMaskMask;
+    return node.payload & ChildMaskMask;
 }
 
 uint nodeMaterialID(SVONode node) {
-    return (node.childMaskAndColor >> 8u) & 0x7FFFFFu;
+    return (node.payload >> 8u) & 0x7FFFFFu;
 }
 
 bool isBrickLeaf(SVONode node) {
-    return (node.childMaskAndColor & BrickLeafFlag) != 0u;
+    return (node.payload & BrickLeafFlag) != 0u;
 }
 
 bool isSolidLeaf(SVONode node) {
@@ -107,8 +110,15 @@ uint paletteColorForMaterial(uint materialID) {
 
 vec4 shadeMaterial(uint materialID, vec3 normal) {
     uint packedColor = paletteColorForMaterial(materialID);
-    vec4 voxelColor = unpackUnorm4x8(packedColor).abgr;
-    float lighting = dot(normal, normalize(vec3(0.5, 1.0, 0.3))) * 0.5 + 0.5;
+    // CPU packs palette as: R | G<<8 | B<<16 | 0xFF000000.
+    // In little-endian memory that's bytes [R, G, B, 0xFF].
+    // unpackUnorm4x8 returns (byte0, byte1, byte2, byte3) in xyzw = (R, G, B, A).
+    vec4 voxelColor = unpackUnorm4x8(packedColor);
+    // Z is the height (up) axis.  Light comes from above (+Z) with a slight
+    // north-east tilt.  Using max(0,dot)*diffuse + ambient keeps all faces
+    // visible while avoiding harsh near-white Y-face speckling.
+    vec3 lightDir = normalize(vec3(0.6, 0.8, 1.0));
+    float lighting = max(0.0, dot(normal, lightDir)) * 0.7 + 0.3;
     return vec4(voxelColor.rgb * lighting, 1.0);
 }
 
@@ -393,13 +403,13 @@ vec4 raymarchVoxels(vec3 ro, vec3 rd) {
         hasFaceMask = true;
 
         if ((exitMask & AXIS_X) != 0u) {
-            currPos.x = targetFace.x + (stepDir.x * 1e-3);
+            currPos.x = targetFace.x + (stepDir.x * BoundaryEpsilon * 2.0);
         }
         if ((exitMask & AXIS_Y) != 0u) {
-            currPos.y = targetFace.y + (stepDir.y * 1e-3);
+            currPos.y = targetFace.y + (stepDir.y * BoundaryEpsilon * 2.0);
         }
         if ((exitMask & AXIS_Z) != 0u) {
-            currPos.z = targetFace.z + (stepDir.z * 1e-3);
+            currPos.z = targetFace.z + (stepDir.z * BoundaryEpsilon * 2.0);
         }
 
         while (depth >= 0) {
@@ -423,5 +433,12 @@ void main() {
     screen.x *= camera.aspect;
     screen *= camera.fovScale;
     vec3 rayDir = normalize(camera.forward.xyz + camera.right.xyz * screen.x + camera.up.xyz * screen.y);
-    outColor = raymarchVoxels(camera.pos.xyz, rayDir);
+    vec4 color = raymarchVoxels(camera.pos.xyz, rayDir);
+    // Discard fully-transparent (miss) fragments so the framebuffer keeps the
+    // clear colour without a write. This also lets the GPU skip any per-sample
+    // blending work for misses, which dominate sparse scenes.
+    if (color.a == 0.0) {
+        discard;
+    }
+    outColor = color;
 }

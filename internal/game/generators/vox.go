@@ -26,13 +26,13 @@ var rsvoPalette = [255]uint32{
 type voxGenerator struct {
 	name  string
 	model voxModel
-	cache *cachedSVO
+	cache *svoSnapshot
 }
 
 type rsvoGenerator struct {
 	name  string
 	model rsvoModel
-	cache *cachedSVO
+	cache *svoSnapshot
 }
 
 type voxModel struct {
@@ -172,10 +172,10 @@ func (g *voxGenerator) BuildSVO(svo *world.SVO) error {
 		return fmt.Errorf("svo is required")
 	}
 	if g.cache != nil {
-		return g.cache.apply(svo)
+		return g.cache.restore(svo)
 	}
 
-	maxDimension := maxInt(g.model.sizeX, maxInt(g.model.sizeY, g.model.sizeZ))
+	maxDimension := max(g.model.sizeX, max(g.model.sizeY, g.model.sizeZ))
 	sceneSize := sceneSizeForDimension(maxDimension)
 	offsetX := (int(sceneSize) - g.model.sizeX) / 2
 	offsetY := (int(sceneSize) - g.model.sizeY) / 2
@@ -186,7 +186,7 @@ func (g *voxGenerator) BuildSVO(svo *world.SVO) error {
 		}
 	})
 
-	cache := captureCache(svo)
+	cache := snapshot(svo)
 	g.cache = &cache
 	return nil
 }
@@ -200,7 +200,7 @@ func (g *rsvoGenerator) BuildSVO(svo *world.SVO) error {
 		return fmt.Errorf("svo is required")
 	}
 	if g.cache != nil {
-		return g.cache.apply(svo)
+		return g.cache.restore(svo)
 	}
 
 	pruneLevel := g.model.pruneLevelForNodeBudget(maxRSVONodeBudget)
@@ -209,7 +209,7 @@ func (g *rsvoGenerator) BuildSVO(svo *world.SVO) error {
 		return fmt.Errorf("loading rsvo storage words: %w", err)
 	}
 
-	cache := captureCache(svo)
+	cache := snapshot(svo)
 	g.cache = &cache
 	return nil
 }
@@ -748,7 +748,7 @@ func buildRSVORank(masks []byte) []uint32 {
 	for block := 0; block < blockCount; block++ {
 		rank[block] = total
 		start := block * rsvoRankBlockSize
-		end := minInt(len(masks), start+rsvoRankBlockSize)
+		end := min(len(masks), start+rsvoRankBlockSize)
 		for _, mask := range masks[start:end] {
 			total += uint32(bits.OnesCount8(mask))
 		}

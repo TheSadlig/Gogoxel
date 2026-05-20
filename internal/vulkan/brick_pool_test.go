@@ -2,9 +2,22 @@ package vulkan
 
 import "testing"
 
-func TestBrickPoolAllocateSkipsReservedZeroSlot(t *testing.T) {
-	pool := &brickPool{allocated: make([]bool, brickPoolCapacity)}
+// newTestBrickPool builds the in-memory state of a brickPool (no Vulkan
+// resources) for unit tests. It mirrors what createBrickPool sets up.
+func newTestBrickPool() *brickPool {
+	pool := &brickPool{
+		allocated: make([]bool, brickPoolCapacity),
+		freeList:  make([]uint32, 0, brickPoolCapacity-1),
+	}
 	pool.allocated[0] = true
+	for slot := brickPoolCapacity - 1; slot >= 1; slot-- {
+		pool.freeList = append(pool.freeList, slot)
+	}
+	return pool
+}
+
+func TestBrickPoolAllocateSkipsReservedZeroSlot(t *testing.T) {
+	pool := newTestBrickPool()
 
 	first, err := pool.Allocate()
 	if err != nil {
@@ -34,8 +47,7 @@ func TestBrickPoolAllocateSkipsReservedZeroSlot(t *testing.T) {
 }
 
 func TestBrickPoolFreeKeepsZeroSlotReserved(t *testing.T) {
-	pool := &brickPool{allocated: make([]bool, brickPoolCapacity)}
-	pool.allocated[0] = true
+	pool := newTestBrickPool()
 
 	pool.Free(0)
 	if !pool.allocated[0] {

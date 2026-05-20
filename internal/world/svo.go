@@ -1,6 +1,11 @@
 package world
 
-import "fmt"
+import (
+	"fmt"
+	"runtime"
+	"sync"
+	"sync/atomic"
+)
 
 const (
 	PaletteSize     = 255
@@ -40,36 +45,43 @@ type SVO struct {
 	hasOccupiedBounds bool
 }
 
+// SvoNode is the on-GPU SVO node. The first word (Payload) packs different
+// meanings depending on node kind:
+//   - Branch:     low 8 bits = child mask
+//   - SolidLeaf:  bits 8..30 = materialID; low 8 bits = 1 (sentinel)
+//   - BrickLeaf:  bit 31 set (BrickLeafFlag); ChildPointer holds the brick slot
+//
+// The shader-side SVONode struct mirrors this layout (see raytracer.frag).
 type SvoNode struct {
-	childMaskAndColor uint32
-	childPointer      uint32
+	payload      uint32
+	childPointer uint32
 }
 
 func (n *SvoNode) setBranch(mask uint8) {
-	n.childMaskAndColor = uint32(mask)
+	n.payload = uint32(mask)
 	n.childPointer = 0
 }
 
 func (n *SvoNode) setSolidLeaf(materialID uint8) {
-	n.childMaskAndColor = uint32(materialID)<<8 | 1
+	n.payload = uint32(materialID)<<8 | 1
 	n.childPointer = 0
 }
 
 func (n *SvoNode) setBrickLeaf(slot uint32) {
-	n.childMaskAndColor = BrickLeafFlag
+	n.payload = BrickLeafFlag
 	n.childPointer = slot
 }
 
 func (n SvoNode) childMask() uint8 {
-	return uint8(n.childMaskAndColor & childMaskMask)
+	return uint8(n.payload & childMaskMask)
 }
 
 func (n SvoNode) materialID() uint8 {
-	return uint8((n.childMaskAndColor >> 8) & 0x7FFFFF)
+	return uint8((n.payload >> 8) & 0x7FFFFF)
 }
 
 func (n SvoNode) isBrickLeaf() bool {
-	return n.childMaskAndColor&BrickLeafFlag != 0
+	return n.payload&BrickLeafFlag != 0
 }
 
 func (n SvoNode) isSolidLeaf() bool {
@@ -116,6 +128,37 @@ func (s *SVO) BuildTreeSparseFunc(size uint, emit func(add func(x, y, z uint, co
 	s.finishBuild(leafLayer)
 }
 
+func (s *SVO) BuildTreeSparseVolumes(size uint, emit func(addVoxel func(x, y, z uint, color uint32), addCube func(x, y, z, cubeSize uint, color uint32))) {
+	s.beginBuild(size)
+
+	var root *stagingNode
+	if emit != nil {
+		emit(
+			func(x, y, z uint, color uint32) {
+				s.addVolumeVoxel(&root, x, y, z, color)
+			},
+			func(x, y, z, cubeSize uint, color uint32) {
+				s.addVolumeCube(&root, x, y, z, cubeSize, color)
+			},
+		)
+	}
+
+	if root == nil {
+		s.nodes = make([]SvoNode, 1)
+		s.colorToMaterial = nil
+		return
+	}
+
+	var brickJobs []*stagingNode
+	s.compactSparseVolume(root, s.size, 0, 0, 0, &brickJobs)
+	if len(brickJobs) > 0 {
+		s.fillBrickJobsParallel(brickJobs)
+	}
+	s.nodes = s.nodes[:0]
+	s.flattenTree(root)
+	s.colorToMaterial = nil
+}
+
 func (s *SVO) LoadStorageBufferWords(words []uint32, occupiedMin, occupiedMax [3]uint32, hasOccupiedBounds bool) error {
 	if len(words) < storageWordCount {
 		return fmt.Errorf("storage buffer words must include at least the size header")
@@ -134,8 +177,8 @@ func (s *SVO) LoadStorageBufferWords(words []uint32, occupiedMin, occupiedMax [3
 		for index := range s.nodes {
 			wordIndex := storageWordCount + index*2
 			s.nodes[index] = SvoNode{
-				childMaskAndColor: words[wordIndex],
-				childPointer:      words[wordIndex+1],
+				payload:      words[wordIndex],
+				childPointer: words[wordIndex+1],
 			}
 		}
 	}
@@ -320,6 +363,155 @@ func (s *SVO) deriveOccupiedBounds(leafLayer map[uint64]*stagingNode) {
 	}
 }
 
+func (s *SVO) extendOccupiedBounds(x, y, z, span uint) {
+	if span == 0 {
+		return
+	}
+
+	maxX := x + span
+	maxY := y + span
+	maxZ := z + span
+	if !s.hasOccupiedBounds {
+		s.occupiedMin = [3]uint{x, y, z}
+		s.occupiedMax = [3]uint{maxX, maxY, maxZ}
+		s.hasOccupiedBounds = true
+		return
+	}
+	if x < s.occupiedMin[0] {
+		s.occupiedMin[0] = x
+	}
+	if y < s.occupiedMin[1] {
+		s.occupiedMin[1] = y
+	}
+	if z < s.occupiedMin[2] {
+		s.occupiedMin[2] = z
+	}
+	if maxX > s.occupiedMax[0] {
+		s.occupiedMax[0] = maxX
+	}
+	if maxY > s.occupiedMax[1] {
+		s.occupiedMax[1] = maxY
+	}
+	if maxZ > s.occupiedMax[2] {
+		s.occupiedMax[2] = maxZ
+	}
+}
+
+func (s *SVO) addVolumeVoxel(root **stagingNode, x, y, z uint, color uint32) {
+	s.addVolumeCube(root, x, y, z, 1, color)
+}
+
+func (s *SVO) addVolumeCube(root **stagingNode, x, y, z, cubeSize uint, color uint32) {
+	if cubeSize == 0 || color == 0 {
+		return
+	}
+	if cubeSize > s.size || x+cubeSize > s.size || y+cubeSize > s.size || z+cubeSize > s.size {
+		return
+	}
+	if cubeSize&(cubeSize-1) != 0 {
+		return
+	}
+	if x%cubeSize != 0 || y%cubeSize != 0 || z%cubeSize != 0 {
+		return
+	}
+
+	materialID := s.materialForColor(color)
+	if *root == nil {
+		*root = newStagingNode()
+	}
+	s.insertVolumeCube(*root, 0, 0, 0, s.size, x, y, z, cubeSize, materialID)
+	s.extendOccupiedBounds(x, y, z, cubeSize)
+}
+
+func (s *SVO) insertVolumeCube(node *stagingNode, originX, originY, originZ, nodeSize, cubeX, cubeY, cubeZ, cubeSize uint, materialID uint8) {
+	if node == nil || cubeSize == 0 || cubeSize > nodeSize {
+		return
+	}
+	if cubeSize == nodeSize {
+		node.tempChildren = [8]*stagingNode{}
+		node.brickIndex = -1
+		node.setSolidLeaf(materialID)
+		return
+	}
+
+	halfSize := nodeSize >> 1
+	if halfSize == 0 {
+		return
+	}
+
+	octant := 0
+	childOriginX := originX
+	childOriginY := originY
+	childOriginZ := originZ
+	if cubeX >= originX+halfSize {
+		octant |= 1
+		childOriginX += halfSize
+	}
+	if cubeY >= originY+halfSize {
+		octant |= 2
+		childOriginY += halfSize
+	}
+	if cubeZ >= originZ+halfSize {
+		octant |= 4
+		childOriginZ += halfSize
+	}
+
+	child := node.tempChildren[octant]
+	if child == nil {
+		child = newStagingNode()
+		node.tempChildren[octant] = child
+	}
+	s.insertVolumeCube(child, childOriginX, childOriginY, childOriginZ, halfSize, cubeX, cubeY, cubeZ, cubeSize, materialID)
+}
+
+func (s *SVO) compactSparseVolume(node *stagingNode, nodeSize, originX, originY, originZ uint, brickJobs *[]*stagingNode) {
+	if node == nil || node.isSolidLeaf() {
+		return
+	}
+
+	childSize := nodeSize >> 1
+	if childSize == 0 {
+		return
+	}
+
+	for octant, child := range node.tempChildren {
+		if child == nil {
+			continue
+		}
+		childOriginX := originX
+		childOriginY := originY
+		childOriginZ := originZ
+		if (octant & 1) != 0 {
+			childOriginX += childSize
+		}
+		if (octant & 2) != 0 {
+			childOriginY += childSize
+		}
+		if (octant & 4) != 0 {
+			childOriginZ += childSize
+		}
+		s.compactSparseVolume(child, childSize, childOriginX, childOriginY, childOriginZ, brickJobs)
+	}
+
+	if nodeSize == BrickSize {
+		_, activeCount, uniformMaterialID, canCollapse := summarizeParent(node)
+		if canCollapse && activeCount == 8 {
+			node.tempChildren = [8]*stagingNode{}
+			node.brickIndex = -1
+			node.setSolidLeaf(uniformMaterialID)
+			return
+		}
+
+		brick := Brick{Origin: [3]uint32{uint32(originX), uint32(originY), uint32(originZ)}}
+		node.brickIndex = len(s.bricks)
+		s.bricks = append(s.bricks, brick)
+		*brickJobs = append(*brickJobs, node)
+		return
+	}
+
+	s.finalizeParent(node)
+}
+
 func (s *SVO) buildFromLeafLayer(leafLayer map[uint64]*stagingNode) {
 	currentLayer := leafLayer
 	currentSize := 1
@@ -351,12 +543,34 @@ func (s *SVO) buildFromLeafLayer(leafLayer map[uint64]*stagingNode) {
 			parent.tempChildren[octantIdx] = childNode
 		}
 
+		// First pass: classify each parent. At the brick layer we either
+		// collapse to a solid leaf (serial) or reserve a brick slot and queue
+		// the voxel-fill for parallel execution. Other layers run serially.
+		var brickJobs []*stagingNode
 		for key, parent := range parentLayer {
 			if currentSize == BrickSize {
-				s.finalizeBrickParent(parent, key)
+				_, activeCount, uniformMaterialID, canCollapse := summarizeParent(parent)
+				if canCollapse && activeCount == 8 {
+					parent.tempChildren = [8]*stagingNode{}
+					parent.setSolidLeaf(uniformMaterialID)
+					continue
+				}
+				ox, oy, oz := voxelKeyXYZ(key)
+				brickIdx := len(s.bricks)
+				s.bricks = append(s.bricks, Brick{Origin: [3]uint32{uint32(ox), uint32(oy), uint32(oz)}})
+				parent.brickIndex = brickIdx
+				brickJobs = append(brickJobs, parent)
 				continue
 			}
 			s.finalizeParent(parent)
+		}
+
+		// Second pass (brick layer only): fill voxels in parallel. Each job
+		// writes to a distinct s.bricks[i].Voxels and a distinct *stagingNode,
+		// so there is no contention. fillBrickVoxels only reads the staging
+		// subtree.
+		if len(brickJobs) > 0 {
+			s.fillBrickJobsParallel(brickJobs)
 		}
 
 		currentLayer = parentLayer
@@ -438,6 +652,48 @@ func (s *SVO) finalizeBrickParent(parent *stagingNode, key uint64) {
 	s.bricks = append(s.bricks, brick)
 }
 
+// fillBrickJobsParallel fans the per-brick voxel fill out across NumCPU
+// workers. Each job mutates only its own brick slot and staging node, so no
+// locking is required around the SVO state.
+func (s *SVO) fillBrickJobsParallel(jobs []*stagingNode) {
+	workers := runtime.NumCPU()
+	if workers < 1 {
+		workers = 1
+	}
+	if workers > len(jobs) {
+		workers = len(jobs)
+	}
+	// Skip the goroutine overhead for trivially small batches.
+	if workers == 1 {
+		for _, parent := range jobs {
+			s.fillBrickVoxels(&s.bricks[parent.brickIndex].Voxels, parent, BrickSize, 0, 0, 0)
+			parent.tempChildren = [8]*stagingNode{}
+			parent.setBrickLeaf(0)
+		}
+		return
+	}
+
+	var next int64
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				i := int(atomic.AddInt64(&next, 1)) - 1
+				if i >= len(jobs) {
+					return
+				}
+				parent := jobs[i]
+				s.fillBrickVoxels(&s.bricks[parent.brickIndex].Voxels, parent, BrickSize, 0, 0, 0)
+				parent.tempChildren = [8]*stagingNode{}
+				parent.setBrickLeaf(0)
+			}
+		}()
+	}
+	wg.Wait()
+}
+
 func (s *SVO) fillBrickVoxels(voxels *[BrickVoxelCount]uint8, node *stagingNode, nodeSize, originX, originY, originZ int) {
 	if node == nil {
 		return
@@ -513,26 +769,30 @@ func (s *SVO) flattenTreeInto(root *stagingNode, nodeIdx uint32) {
 		s.bricks[root.brickIndex].NodeIndex = nodeIdx
 	}
 
-	activeChildren := make([]*stagingNode, 0, 8)
+	// Hot path: avoid per-node []*stagingNode allocation by reusing a fixed
+	// 8-slot stack array. Each SVO node has at most 8 octant children.
+	var activeChildren [8]*stagingNode
+	activeCount := 0
 	for octant := 0; octant < 8; octant++ {
 		if root.tempChildren[octant] != nil {
-			activeChildren = append(activeChildren, root.tempChildren[octant])
+			activeChildren[activeCount] = root.tempChildren[octant]
+			activeCount++
 		}
 	}
 
-	if len(activeChildren) == 0 {
+	if activeCount == 0 {
 		return
 	}
 
 	baseChildPointer := uint32(len(s.nodes))
 	s.nodes[nodeIdx].childPointer = baseChildPointer
 
-	for range activeChildren {
+	for i := 0; i < activeCount; i++ {
 		s.nodes = append(s.nodes, SvoNode{})
 	}
 
-	for childOffset, child := range activeChildren {
-		s.flattenTreeInto(child, baseChildPointer+uint32(childOffset))
+	for childOffset := 0; childOffset < activeCount; childOffset++ {
+		s.flattenTreeInto(activeChildren[childOffset], baseChildPointer+uint32(childOffset))
 	}
 }
 
@@ -546,7 +806,7 @@ func (s *SVO) StorageBufferWords() []uint32 {
 	words[1] = uint32(len(s.nodes))
 	for index, node := range s.nodes {
 		wordIndex := storageWordCount + index*2
-		words[wordIndex] = node.childMaskAndColor
+		words[wordIndex] = node.payload
 		words[wordIndex+1] = node.childPointer
 	}
 	copy(words[storageWordCount+len(s.nodes)*2:], s.palette[:])
@@ -574,6 +834,10 @@ func (s *SVO) Palette() [PaletteSize]uint32 {
 	return s.palette
 }
 
+// Bricks returns a defensive deep copy of the per-brick voxel data. Prefer
+// BricksRef when the caller can guarantee it will not mutate the returned
+// slice (e.g. read-only GPU upload pipelines), which avoids a 512B memcpy
+// per brick.
 func (s *SVO) Bricks() []Brick {
 	if s == nil {
 		return nil
@@ -581,6 +845,16 @@ func (s *SVO) Bricks() []Brick {
 	bricks := make([]Brick, len(s.bricks))
 	copy(bricks, s.bricks)
 	return bricks
+}
+
+// BricksRef returns the SVO's backing brick slice without copying. The
+// caller must treat the result (and every voxel array it references) as
+// read-only for the lifetime of the SVO.
+func (s *SVO) BricksRef() []Brick {
+	if s == nil {
+		return nil
+	}
+	return s.bricks
 }
 
 func (s *SVO) BrickCount() int {

@@ -12,15 +12,15 @@ type Generator interface {
 	BuildSVO(svo *world.SVO) error
 }
 
-type cachedSVO struct {
+type svoSnapshot struct {
 	snapshot world.Snapshot
 }
 
-func captureCache(svo *world.SVO) cachedSVO {
-	return cachedSVO{snapshot: svo.Snapshot()}
+func snapshot(svo *world.SVO) svoSnapshot {
+	return svoSnapshot{snapshot: svo.Snapshot()}
 }
 
-func (c cachedSVO) apply(target *world.SVO) error {
+func (c svoSnapshot) restore(target *world.SVO) error {
 	return target.LoadSnapshot(c.snapshot)
 }
 
