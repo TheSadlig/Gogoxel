@@ -95,6 +95,15 @@ type brickStreamer struct {
 	stopOnce sync.Once
 }
 
+type StreamingStats struct {
+	DesiredReady       bool
+	DesiredCount       int
+	ResidentCount      int
+	PendingDesiredCount int
+	ResidentLimit      int
+	UploadBudget       int
+}
+
 // brickStreamerConfig customises the streaming budget. Zero-valued fields
 // fall back to defaults derived from brick-pool capacity.
 type brickStreamerConfig struct {
@@ -219,6 +228,32 @@ func (s *brickStreamer) ResidentCount() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return len(s.resident)
+}
+
+func (s *brickStreamer) Stats() StreamingStats {
+	if s == nil {
+		return StreamingStats{}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	stats := StreamingStats{
+		DesiredReady:  s.desiredReady,
+		DesiredCount:  len(s.desired),
+		ResidentCount: len(s.resident),
+		ResidentLimit: s.residentLimit,
+		UploadBudget:  s.uploadBudget,
+	}
+	if !s.desiredReady {
+		return stats
+	}
+	for _, logicalIndex := range s.desired {
+		if _, ok := s.resident[logicalIndex]; ok {
+			continue
+		}
+		stats.PendingDesiredCount++
+	}
+	return stats
 }
 
 func (s *brickStreamer) recomputeDesired() {
@@ -505,6 +540,13 @@ func (chunk *ChunkResources) ResidentBrickCount() int {
 		return 0
 	}
 	return chunk.streamer.ResidentCount()
+}
+
+func (chunk *ChunkResources) StreamingStats() StreamingStats {
+	if chunk == nil || chunk.streamer == nil {
+		return StreamingStats{}
+	}
+	return chunk.streamer.Stats()
 }
 
 func (chunk *ChunkResources) RecordStreaming(frame *Frame) error {

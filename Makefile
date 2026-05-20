@@ -8,8 +8,13 @@ VULKAN_HEADER := $(VULKAN_HEADERS_DIR)/vulkan/vulkan.h
 PKG_CONFIG_LIBS := $(shell pkg-config --libs glfw3 vulkan)
 PKG_CONFIG_CFLAGS := $(shell pkg-config --cflags glfw3 vulkan)
 RUN_ENV := GODEBUG=cgocheck=0
+PROTO_SRC := api/proto/gogoxel/automation/v1/automation.proto
+GODOG_TAGS ?= ~@gpu
+BDD_GPU ?=
+BDD_ARTIFACT_DIR ?= $(CURDIR)/.artifacts/godog
+RUN_ARGS ?=
 
-.PHONY: headers shaders build run clean
+.PHONY: headers shaders proto build run clean test test-godog test-godog-artifacts
 
 headers: $(VULKAN_HEADER)
 
@@ -44,11 +49,27 @@ $(SHADER_DIR)/%.frag.spv: $(SHADER_DIR)/%.frag
 $(SHADER_DIR)/%.comp.spv: $(SHADER_DIR)/%.comp
 	glslangValidator -V -S comp -o $@ $<
 
+proto:
+	PATH="$(shell go env GOPATH)/bin:$$PATH" protoc -I api/proto --go_out=. --go_opt=module=Gogoxel --go-grpc_out=. --go-grpc_opt=module=Gogoxel $(PROTO_SRC)
+
 build: headers shaders
 	CGO_CFLAGS="$(PKG_CONFIG_CFLAGS)" CGO_LDFLAGS="$(PKG_CONFIG_LIBS)" go build ./cmd/gogoxel
 
 run: headers shaders
-	$(RUN_ENV) CGO_CFLAGS="$(PKG_CONFIG_CFLAGS)" CGO_LDFLAGS="$(PKG_CONFIG_LIBS)" go run ./cmd/gogoxel
+	$(RUN_ENV) CGO_CFLAGS="$(PKG_CONFIG_CFLAGS)" CGO_LDFLAGS="$(PKG_CONFIG_LIBS)" go run ./cmd/gogoxel $(RUN_ARGS)
+
+test:
+	go test ./...
+
+test-godog:
+	GOGOXEL_BDD_GPU='$(BDD_GPU)' GODOG_TAGS='$(GODOG_TAGS)' go test -tags=godog ./test/bdd
+
+test-godog-artifacts:
+	rm -rf '$(BDD_ARTIFACT_DIR)/hidden-window'
+	mkdir -p '$(BDD_ARTIFACT_DIR)/hidden-window'
+	GOGOXEL_BDD_GPU='1' GOGOXEL_BDD_ARTIFACT_DIR='$(BDD_ARTIFACT_DIR)/hidden-window' GODOG_TAGS='@gpu&&~@perf' go test -v -tags=godog ./test/bdd
+	@printf 'Artifacts written to %s\n' '$(BDD_ARTIFACT_DIR)/hidden-window'
+	@find '$(BDD_ARTIFACT_DIR)/hidden-window' -mindepth 2 -type f \( -name '*.png' -o -name '*.jsonl' \) -print | sort
 
 clean:
 	rm -f $(SHADER_SPV)

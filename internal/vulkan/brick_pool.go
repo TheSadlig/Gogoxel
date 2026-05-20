@@ -109,11 +109,13 @@ func (r *Renderer) createBrickPoolWithEdge(textureEdge uint32) (*brickPool, erro
 		SharingMode:   vk.SharingModeExclusive,
 		InitialLayout: vk.ImageLayoutUndefined,
 	}
-	if err := withPinnedValue(&pool.image, func() error {
-		return vk.Error(vk.CreateImage(r.device, &imageCreateInfo, nil, &pool.image))
+	var image vk.Image
+	if err := withPinnedValue(&image, func() error {
+		return vk.Error(vk.CreateImage(r.device, &imageCreateInfo, nil, &image))
 	}); err != nil {
 		return nil, fmt.Errorf("creating brick pool image: %w", err)
 	}
+	pool.image = image
 
 	var imageRequirements vk.MemoryRequirements
 	vk.GetImageMemoryRequirements(r.device, pool.image, &imageRequirements)
@@ -136,12 +138,14 @@ func (r *Renderer) createBrickPoolWithEdge(textureEdge uint32) (*brickPool, erro
 		MemoryTypeIndex: memoryTypeIndex,
 	}
 	pool.imageBytes = allocateInfo.AllocationSize
-	if err := withPinnedValue(&pool.imageMemory, func() error {
-		return vk.Error(vk.AllocateMemory(r.device, &allocateInfo, nil, &pool.imageMemory))
+	var imageMemory vk.DeviceMemory
+	if err := withPinnedValue(&imageMemory, func() error {
+		return vk.Error(vk.AllocateMemory(r.device, &allocateInfo, nil, &imageMemory))
 	}); err != nil {
 		pool.Close(r.device)
 		return nil, fmt.Errorf("allocating brick pool image memory: %w", err)
 	}
+	pool.imageMemory = imageMemory
 
 	if err := vk.Error(vk.BindImageMemory(r.device, pool.image, pool.imageMemory, 0)); err != nil {
 		pool.Close(r.device)
@@ -167,12 +171,14 @@ func (r *Renderer) createBrickPoolWithEdge(textureEdge uint32) (*brickPool, erro
 			LayerCount:     1,
 		},
 	}
-	if err := withPinnedValue(&pool.imageView, func() error {
-		return vk.Error(vk.CreateImageView(r.device, &viewCreateInfo, nil, &pool.imageView))
+	var imageView vk.ImageView
+	if err := withPinnedValue(&imageView, func() error {
+		return vk.Error(vk.CreateImageView(r.device, &viewCreateInfo, nil, &imageView))
 	}); err != nil {
 		pool.Close(r.device)
 		return nil, fmt.Errorf("creating brick pool image view: %w", err)
 	}
+	pool.imageView = imageView
 
 	if err := r.clearBrickPoolImage(pool.image); err != nil {
 		pool.Close(r.device)

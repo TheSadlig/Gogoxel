@@ -65,6 +65,9 @@ type Renderer struct {
 	sharedAirPool *brickPool
 
 	instanceExtensions []string
+	physicalDeviceName string
+	presentMode        vk.PresentMode
+	captureSupported   bool
 }
 
 func New(window *platform.Window) (*Renderer, error) {
@@ -193,9 +196,10 @@ func (r *Renderer) pickPhysicalDevice() error {
 		r.physicalDevice = device
 		r.graphicsQueueIndex = indices.graphics
 		r.presentQueueIndex = indices.present
+		r.physicalDeviceName = physicalDeviceName(device)
 		vk.GetPhysicalDeviceMemoryProperties(device, &r.memoryProperties)
 		r.memoryProperties.Deref()
-		fmt.Printf("[vulkan] physical device: %s\n", physicalDeviceName(device))
+		fmt.Printf("[vulkan] physical device: %s\n", r.physicalDeviceName)
 		return nil
 	}
 
@@ -268,12 +272,19 @@ func (r *Renderer) createSwapchain() error {
 		createInfo.QueueFamilyIndexCount = uint32(len(queueFamilyIndices))
 		createInfo.PQueueFamilyIndices = queueFamilyIndices
 	}
+	if support.capabilities.SupportedUsageFlags&vk.ImageUsageFlags(vk.ImageUsageTransferSrcBit) != 0 {
+		createInfo.ImageUsage |= vk.ImageUsageFlags(vk.ImageUsageTransferSrcBit)
+		r.captureSupported = true
+	} else {
+		r.captureSupported = false
+	}
 
 	swapchain, err := vkbridge.CreateSwapchain(r.device, &createInfo)
 	if err != nil {
 		return err
 	}
 	r.swapchain = swapchain
+	r.presentMode = presentMode
 
 	r.swapchainFormat = surfaceFormat.Format
 	r.swapchainExtent = extent
@@ -443,4 +454,18 @@ func (r *Renderer) runDeferredReleases(frameSlot int) {
 	}
 	r.frameReleases[frameSlot] = r.frameReleases[frameSlot][:0]
 	r.resetStagingRing(frameSlot)
+}
+
+func (r *Renderer) DeviceName() string {
+	if r == nil {
+		return ""
+	}
+	return r.physicalDeviceName
+}
+
+func (r *Renderer) PresentModeName() string {
+	if r == nil {
+		return ""
+	}
+	return presentModeName(r.presentMode)
 }
