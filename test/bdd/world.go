@@ -48,6 +48,12 @@ type automationDriver interface {
 	Close() error
 }
 
+type startupResult struct {
+	driver       automationDriver
+	waitConsumed bool
+	err          error
+}
+
 type sessionMode string
 
 const (
@@ -55,6 +61,7 @@ const (
 	sessionModeHiddenWindow sessionMode = "hidden-window"
 
 	defaultRPCDeadline = 10 * time.Second
+	generatorLoadTimeout = 60 * time.Second
 	startupTimeout     = 20 * time.Second
 	shutdownTimeout    = 10 * time.Second
 )
@@ -65,134 +72,175 @@ var (
 	builtBinaryErr  error
 )
 
-type scenarioWorld struct {
-	driver        automationDriver
-	command       *exec.Cmd
-	waitCh        chan error
-	commandOutput bytes.Buffer
-	artifactDir   string
-	lastCamera    platform.Camera
-	lastReadiness automation.Readiness
-	lastMetrics   automation.MetricsSnapshot
-	lastStep      automation.StepResult
+type scenarioHarness struct {
+	driver         automationDriver
+	command        *exec.Cmd
+	waitCh         chan error
+	commandOutput  bytes.Buffer
+	artifactDir    string
+	artifactSubdir string
+	lastCamera     platform.Camera
+	lastReadiness  automation.Readiness
+	lastMetrics    automation.MetricsSnapshot
+	lastStep       automation.StepResult
 	lastScreenshot automation.ArtifactInfo
-	lastTrace     automation.ArtifactInfo
-	mode          sessionMode
-	address       string
-	closed        bool
+	lastTrace      automation.ArtifactInfo
+	mode           sessionMode
+	address        string
+	cleanupArtifacts bool
+	autoTraceName  string
+	closed         bool
 }
 
 func InitializeScenario(ctx *godog.ScenarioContext) {
-	world := &scenarioWorld{}
+	harness := &scenarioHarness{}
 
-	ctx.Before(func(runCtx context.Context, _ *godog.Scenario) (context.Context, error) {
-		*world = scenarioWorld{}
+	ctx.Before(func(runCtx context.Context, scenario *godog.Scenario) (context.Context, error) {
+		*harness = scenarioHarness{}
+		harness.artifactSubdir = scenarioArtifactSubdir(scenario)
+		harness.autoTraceName = traceNameForScenario(scenario)
 		return runCtx, nil
 	})
 
 	ctx.After(func(runCtx context.Context, _ *godog.Scenario, stepErr error) (context.Context, error) {
-		shutdownErr := world.shutdown(stepErr != nil)
+		shutdownErr := harness.shutdown(stepErr != nil)
 		if stepErr == nil && shutdownErr != nil {
 			return runCtx, shutdownErr
 		}
 		return runCtx, nil
 	})
 
-	ctx.Step(`^an automation session is started in headless mode$`, world.startHeadless)
-	ctx.Step(`^an automation session is started in hidden-window mode$`, world.startHiddenWindow)
-	ctx.Step(`^the engine is reset to a clean state$`, world.resetEngine)
-	ctx.Step(`^the simulation tick rate is (\d+) Hz$`, world.setTickRate)
-	ctx.Step(`^the generator "([^"]+)" is loaded$`, world.loadGenerator)
-	ctx.Step(`^the camera is set to x (-?\d+(?:\.\d+)?) y (-?\d+(?:\.\d+)?) z (-?\d+(?:\.\d+)?) yaw (-?\d+(?:\.\d+)?) pitch (-?\d+(?:\.\d+)?) fov (-?\d+(?:\.\d+)?)$`, world.setCamera)
-	ctx.Step(`^I hold the action "([^"]+)"$`, world.holdAction)
-	ctx.Step(`^I release the action "([^"]+)"$`, world.releaseAction)
-	ctx.Step(`^I advance the simulation by (\d+) ticks$`, world.advanceTicks)
-	ctx.Step(`^I advance the simulation by (\d+) frames$`, world.advanceFrames)
-	ctx.Step(`^the automation session becomes render-ready$`, world.waitForRenderReady)
-	ctx.Step(`^I reset the metrics window$`, world.resetMetricsWindow)
-	ctx.Step(`^the camera x position should be approximately (-?\d+(?:\.\d+)?) within (\d+(?:\.\d+)?)$`, world.expectCameraX)
-	ctx.Step(`^the metrics window should contain at least (\d+) samples$`, world.expectMetricSamples)
-	ctx.Step(`^the average FPS should be above (\d+(?:\.\d+)?)$`, world.expectAverageFPS)
-	ctx.Step(`^the renderer device name should not be empty$`, world.expectRendererDevice)
-	ctx.Step(`^I capture the screenshot artifact "([^"]+)"$`, world.captureScreenshot)
-	ctx.Step(`^the screenshot artifact should exist$`, world.expectScreenshotArtifact)
-	ctx.Step(`^I export the trace artifact "([^"]+)"$`, world.exportTrace)
-	ctx.Step(`^the trace artifact should exist$`, world.expectTraceArtifact)
-	ctx.Step(`^the trace artifact should contain "([^"]+)"$`, world.expectTraceContains)
+	ctx.Step(`^an automation session is started in headless mode$`, harness.startHeadless)
+	ctx.Step(`^an automation session is started in hidden-window mode$`, harness.startHiddenWindow)
+	ctx.Step(`^the engine is reset to a clean state$`, harness.resetEngine)
+	ctx.Step(`^the simulation tick rate is (\d+) Hz$`, harness.setTickRate)
+	ctx.Step(`^the generator "([^"]+)" is loaded$`, harness.loadGenerator)
+	ctx.Step(`^the camera is set to x (-?\d+(?:\.\d+)?) y (-?\d+(?:\.\d+)?) z (-?\d+(?:\.\d+)?) yaw (-?\d+(?:\.\d+)?) pitch (-?\d+(?:\.\d+)?) fov (-?\d+(?:\.\d+)?)$`, harness.setCamera)
+	ctx.Step(`^I hold the action "([^"]+)"$`, harness.holdAction)
+	ctx.Step(`^I release the action "([^"]+)"$`, harness.releaseAction)
+	ctx.Step(`^I advance the simulation by (\d+) ticks$`, harness.advanceTicks)
+	ctx.Step(`^I advance the simulation by (\d+) frames$`, harness.advanceFrames)
+	ctx.Step(`^the automation session becomes render-ready$`, harness.waitForRendererReady)
+	ctx.Step(`^I reset the metrics window$`, harness.resetMetricsWindow)
+	ctx.Step(`^the camera x position should be approximately (-?\d+(?:\.\d+)?) within (\d+(?:\.\d+)?)$`, harness.expectCameraX)
+	ctx.Step(`^the metrics window should contain at least (\d+) samples$`, harness.expectMetricSamples)
+	ctx.Step(`^the average FPS should be above (\d+(?:\.\d+)?)$`, harness.expectAverageFPS)
+	ctx.Step(`^the renderer device name should not be empty$`, harness.expectRendererDevice)
+	ctx.Step(`^I capture the screenshot artifact "([^"]+)"$`, harness.captureScreenshot)
+	ctx.Step(`^the screenshot artifact should exist$`, harness.expectScreenshotArtifact)
+	ctx.Step(`^I export the trace artifact "([^"]+)"$`, harness.exportTrace)
+	ctx.Step(`^the trace artifact should exist$`, harness.expectTraceArtifact)
+	ctx.Step(`^the trace artifact should contain "([^"]+)"$`, harness.expectTraceContains)
 }
 
-func (w *scenarioWorld) startHeadless() error {
-	return w.startSession(sessionModeHeadless)
+func (h *scenarioHarness) startHeadless() error {
+	return h.startSession(sessionModeHeadless)
 }
 
-func (w *scenarioWorld) startHiddenWindow() error {
+func (h *scenarioHarness) startHiddenWindow() error {
 	if strings.TrimSpace(os.Getenv("GOGOXEL_BDD_GPU")) == "" {
 		return godog.ErrSkip
 	}
-	return w.startSession(sessionModeHiddenWindow)
+	return h.startSession(sessionModeHiddenWindow)
 }
 
-func (w *scenarioWorld) startSession(mode sessionMode) error {
-	if w.driver != nil {
+func (h *scenarioHarness) startSession(mode sessionMode) error {
+	if h.driver != nil {
 		return fmt.Errorf("automation session is already running")
 	}
 	binaryPath, err := gogoxelBinaryPath()
 	if err != nil {
 		return err
 	}
-	artifactDir, err := os.MkdirTemp("", "gogoxel-bdd-artifacts-")
+	artifactDir, cleanupArtifacts, err := scenarioArtifactDir(h.artifactSubdir)
 	if err != nil {
 		return err
 	}
 	address, err := reserveLoopbackAddress()
 	if err != nil {
-		os.RemoveAll(artifactDir)
+		cleanupScenarioArtifacts(artifactDir, cleanupArtifacts)
 		return err
 	}
 	args := []string{"--automation", "--listen", address, "--artifact-dir", artifactDir}
-	if mode == sessionModeHeadless {
+	switch mode {
+	case sessionModeHeadless:
 		args = append(args, "--headless")
-	} else {
+	case sessionModeHiddenWindow:
 		args = append(args, "--hidden-window")
+	default:
+		cleanupScenarioArtifacts(artifactDir, cleanupArtifacts)
+		return fmt.Errorf("unsupported automation session mode %q", mode)
 	}
 	command := exec.Command(binaryPath, args...)
 	command.Dir = workspaceRoot()
-	command.Stdout = &w.commandOutput
-	command.Stderr = &w.commandOutput
+	command.Stdout = &h.commandOutput
+	command.Stderr = &h.commandOutput
 	if err := command.Start(); err != nil {
-		os.RemoveAll(artifactDir)
+		cleanupScenarioArtifacts(artifactDir, cleanupArtifacts)
 		return fmt.Errorf("starting automation session: %w", err)
 	}
-	w.waitCh = make(chan error, 1)
+	h.waitCh = make(chan error, 1)
 	go func() {
-		w.waitCh <- command.Wait()
+		h.waitCh <- command.Wait()
 	}()
 
-	driver, err := waitForDriver(address, w.waitCh, &w.commandOutput)
-	if err != nil {
-		_ = command.Process.Kill()
-		<-w.waitCh
-		os.RemoveAll(artifactDir)
-		return err
+	startup := waitForDriver(address, h.waitCh, &h.commandOutput)
+	if startup.err != nil {
+		cleanupErr := h.stopStartupCommand(command, startup.waitConsumed)
+		cleanupScenarioArtifacts(artifactDir, cleanupArtifacts)
+		if cleanupErr != nil {
+			return errors.Join(startup.err, cleanupErr)
+		}
+		return startup.err
 	}
-	w.driver = driver
-	w.command = command
-	w.artifactDir = artifactDir
-	w.mode = mode
-	w.address = address
-	w.closed = false
+	h.driver = startup.driver
+	h.command = command
+	h.artifactDir = artifactDir
+	h.mode = mode
+	h.address = address
+	h.cleanupArtifacts = cleanupArtifacts
+	h.closed = false
 	return nil
 }
 
-func (w *scenarioWorld) shutdown(preserveArtifacts bool) error {
-	if w.closed {
+func (h *scenarioHarness) stopStartupCommand(command *exec.Cmd, waitConsumed bool) error {
+	if waitConsumed || command == nil || command.Process == nil {
 		return nil
 	}
-	w.closed = true
+	if err := command.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+		return fmt.Errorf("killing automation session: %w", err)
+	}
+	select {
+	case err := <-h.waitCh:
+		if err != nil && !errors.Is(err, os.ErrProcessDone) {
+			return fmt.Errorf("waiting for automation session after startup failure: %w\n%s", err, strings.TrimSpace(h.commandOutput.String()))
+		}
+		return nil
+	case <-time.After(shutdownTimeout):
+		return fmt.Errorf("automation session did not stop within %s\n%s", shutdownTimeout, strings.TrimSpace(h.commandOutput.String()))
+	}
+}
+
+func (h *scenarioHarness) shutdown(preserveArtifacts bool) error {
+	if h.closed {
+		return nil
+	}
+	h.closed = true
 	var shutdownErr error
-	if w.driver != nil {
+	if h.driver != nil && h.autoTraceName != "" && h.lastTrace.Path == "" {
+		ctx, cancel := rpcContext()
+		artifact, err := h.driver.ExportTrace(ctx, h.autoTraceName)
+		cancel()
+		if err == nil {
+			h.lastTrace = artifact
+		}
+		if err != nil && shutdownErr == nil {
+			shutdownErr = fmt.Errorf("exporting scenario trace: %w", err)
+		}
+	}
+	if h.driver != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		stopErr := w.driver.Stop(ctx)
+		stopErr := h.driver.Stop(ctx)
 		cancel()
 		if stopErr != nil {
 			code := status.Code(stopErr)
@@ -200,64 +248,64 @@ func (w *scenarioWorld) shutdown(preserveArtifacts bool) error {
 				shutdownErr = fmt.Errorf("stopping automation session: %w", stopErr)
 			}
 		}
-		if closeErr := w.driver.Close(); shutdownErr == nil && closeErr != nil {
+		if closeErr := h.driver.Close(); shutdownErr == nil && closeErr != nil {
 			shutdownErr = closeErr
 		}
-		w.driver = nil
+		h.driver = nil
 	}
-	if w.command != nil {
-		if err := w.waitForExit(); shutdownErr == nil && err != nil {
+	if h.command != nil {
+		if err := h.waitForExit(); shutdownErr == nil && err != nil {
 			shutdownErr = err
 		}
-		w.command = nil
+		h.command = nil
 	}
-	if !preserveArtifacts && w.artifactDir != "" {
-		_ = os.RemoveAll(w.artifactDir)
+	if !preserveArtifacts && h.cleanupArtifacts && h.artifactDir != "" {
+		_ = os.RemoveAll(h.artifactDir)
 	}
 	return shutdownErr
 }
 
-func (w *scenarioWorld) waitForExit() error {
-	if w.waitCh == nil {
+func (h *scenarioHarness) waitForExit() error {
+	if h.waitCh == nil {
 		return nil
 	}
 	select {
-	case err := <-w.waitCh:
+	case err := <-h.waitCh:
 		if err != nil {
-			return fmt.Errorf("automation session exited unexpectedly: %w\n%s", err, strings.TrimSpace(w.commandOutput.String()))
+			return fmt.Errorf("automation session exited unexpectedly: %w\n%s", err, strings.TrimSpace(h.commandOutput.String()))
 		}
 		return nil
 	case <-time.After(shutdownTimeout):
-		if w.command != nil && w.command.Process != nil {
-			_ = w.command.Process.Kill()
+		if h.command != nil && h.command.Process != nil {
+			_ = h.command.Process.Kill()
 		}
-		err := <-w.waitCh
+		err := <-h.waitCh
 		if err != nil && !errors.Is(err, os.ErrProcessDone) {
-			return fmt.Errorf("automation session required force-kill: %w\n%s", err, strings.TrimSpace(w.commandOutput.String()))
+			return fmt.Errorf("automation session required force-kill: %w\n%s", err, strings.TrimSpace(h.commandOutput.String()))
 		}
-		return fmt.Errorf("automation session did not stop within %s\n%s", shutdownTimeout, strings.TrimSpace(w.commandOutput.String()))
+		return fmt.Errorf("automation session did not stop within %s\n%s", shutdownTimeout, strings.TrimSpace(h.commandOutput.String()))
 	}
 }
 
-func (w *scenarioWorld) resetEngine() error {
+func (h *scenarioHarness) resetEngine() error {
 	ctx, cancel := rpcContext()
 	defer cancel()
-	return w.driver.Reset(ctx)
+	return h.driver.Reset(ctx)
 }
 
-func (w *scenarioWorld) setTickRate(rate int) error {
+func (h *scenarioHarness) setTickRate(rate int) error {
 	ctx, cancel := rpcContext()
 	defer cancel()
-	return w.driver.SetTickRate(ctx, rate)
+	return h.driver.SetTickRate(ctx, rate)
 }
 
-func (w *scenarioWorld) loadGenerator(name string) error {
-	ctx, cancel := rpcContext()
+func (h *scenarioHarness) loadGenerator(name string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), generatorLoadTimeout)
 	defer cancel()
-	return w.driver.LoadGenerator(ctx, name)
+	return h.driver.LoadGenerator(ctx, name)
 }
 
-func (w *scenarioWorld) setCamera(x, y, z, yaw, pitch, fov float64) error {
+func (h *scenarioHarness) setCamera(x, y, z, yaw, pitch, fov float64) error {
 	camera := platform.Camera{
 		Position: [3]float32{float32(x), float32(y), float32(z)},
 		YawDeg:   float32(yaw),
@@ -266,84 +314,83 @@ func (w *scenarioWorld) setCamera(x, y, z, yaw, pitch, fov float64) error {
 	}
 	ctx, cancel := rpcContext()
 	defer cancel()
-	if err := w.driver.SetCamera(ctx, camera); err != nil {
+	if err := h.driver.SetCamera(ctx, camera); err != nil {
 		return err
 	}
-	w.lastCamera = camera
+	h.lastCamera = camera
 	return nil
 }
 
-func (w *scenarioWorld) holdAction(action string) error {
+func (h *scenarioHarness) holdAction(action string) error {
 	ctx, cancel := rpcContext()
 	defer cancel()
-	return w.driver.PressAction(ctx, action)
+	return h.driver.PressAction(ctx, action)
 }
 
-func (w *scenarioWorld) releaseAction(action string) error {
+func (h *scenarioHarness) releaseAction(action string) error {
 	ctx, cancel := rpcContext()
 	defer cancel()
-	return w.driver.ReleaseAction(ctx, action)
+	return h.driver.ReleaseAction(ctx, action)
 }
 
-func (w *scenarioWorld) advanceTicks(ticks int) error {
+func (h *scenarioHarness) advanceTicks(ticks int) error {
 	ctx, cancel := rpcContext()
 	defer cancel()
-	result, err := w.driver.StepTicks(ctx, ticks)
+	result, err := h.driver.StepTicks(ctx, ticks)
 	if err != nil {
 		return err
 	}
-	w.lastStep = result
-	w.lastMetrics = result.Metrics
+	h.lastStep = result
+	h.lastMetrics = result.Metrics
 	return nil
 }
 
-func (w *scenarioWorld) advanceFrames(frames int) error {
+func (h *scenarioHarness) advanceFrames(frames int) error {
 	ctx, cancel := rpcContext()
 	defer cancel()
-	result, err := w.driver.StepFrames(ctx, frames)
+	result, err := h.driver.StepFrames(ctx, frames)
 	if err != nil {
 		return err
 	}
-	w.lastStep = result
-	w.lastMetrics = result.Metrics
+	h.lastStep = result
+	h.lastMetrics = result.Metrics
 	return nil
 }
 
-func (w *scenarioWorld) waitForRenderReady() error {
+func (h *scenarioHarness) waitForRendererReady() error {
 	ctx, cancel := context.WithTimeout(context.Background(), startupTimeout)
 	defer cancel()
-	readiness, err := w.driver.WaitUntilReady(ctx, automation.WaitCriteria{
-		RequireRenderer:         true,
-		RequireSceneLoaded:      true,
-		RequireStreamingSettled: true,
-		MaxTicks:                600,
+	readiness, err := h.driver.WaitUntilReady(ctx, automation.WaitCriteria{
+		RequireRenderer:    true,
+		RequireSceneLoaded: true,
+		MaxTicks:           600,
 	})
 	if err != nil {
 		return err
 	}
-	w.lastReadiness = readiness
+	h.lastReadiness = readiness
 	return nil
 }
 
-func (w *scenarioWorld) resetMetricsWindow() error {
+func (h *scenarioHarness) resetMetricsWindow() error {
 	ctx, cancel := rpcContext()
 	defer cancel()
-	metrics, err := w.driver.ResetMetricsWindow(ctx)
+	metrics, err := h.driver.ResetMetricsWindow(ctx)
 	if err != nil {
 		return err
 	}
-	w.lastMetrics = metrics
+	h.lastMetrics = metrics
 	return nil
 }
 
-func (w *scenarioWorld) expectCameraX(expected, tolerance float64) error {
+func (h *scenarioHarness) expectCameraX(expected, tolerance float64) error {
 	ctx, cancel := rpcContext()
 	defer cancel()
-	camera, err := w.driver.GetCamera(ctx)
+	camera, err := h.driver.GetCamera(ctx)
 	if err != nil {
 		return err
 	}
-	w.lastCamera = camera
+	h.lastCamera = camera
 	actual := float64(camera.Position[0])
 	if math.Abs(actual-expected) > tolerance {
 		return fmt.Errorf("expected camera x to be %.3f +/- %.3f, got %.3f", expected, tolerance, actual)
@@ -351,8 +398,8 @@ func (w *scenarioWorld) expectCameraX(expected, tolerance float64) error {
 	return nil
 }
 
-func (w *scenarioWorld) expectMetricSamples(minimum int) error {
-	metrics, err := w.refreshMetrics()
+func (h *scenarioHarness) expectMetricSamples(minimum int) error {
+	metrics, err := h.refreshMetrics()
 	if err != nil {
 		return err
 	}
@@ -362,8 +409,8 @@ func (w *scenarioWorld) expectMetricSamples(minimum int) error {
 	return nil
 }
 
-func (w *scenarioWorld) expectAverageFPS(minimum float64) error {
-	metrics, err := w.refreshMetrics()
+func (h *scenarioHarness) expectAverageFPS(minimum float64) error {
+	metrics, err := h.refreshMetrics()
 	if err != nil {
 		return err
 	}
@@ -373,8 +420,8 @@ func (w *scenarioWorld) expectAverageFPS(minimum float64) error {
 	return nil
 }
 
-func (w *scenarioWorld) expectRendererDevice() error {
-	metrics, err := w.refreshMetrics()
+func (h *scenarioHarness) expectRendererDevice() error {
+	metrics, err := h.refreshMetrics()
 	if err != nil {
 		return err
 	}
@@ -384,22 +431,22 @@ func (w *scenarioWorld) expectRendererDevice() error {
 	return nil
 }
 
-func (w *scenarioWorld) captureScreenshot(name string) error {
+func (h *scenarioHarness) captureScreenshot(name string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), startupTimeout)
 	defer cancel()
-	artifact, err := w.driver.CaptureScreenshot(ctx, name)
+	artifact, err := h.driver.CaptureScreenshot(ctx, name)
 	if err != nil {
 		return err
 	}
-	w.lastScreenshot = artifact
+	h.lastScreenshot = artifact
 	return nil
 }
 
-func (w *scenarioWorld) expectScreenshotArtifact() error {
-	if strings.TrimSpace(w.lastScreenshot.Path) == "" {
+func (h *scenarioHarness) expectScreenshotArtifact() error {
+	if strings.TrimSpace(h.lastScreenshot.Path) == "" {
 		return fmt.Errorf("no screenshot artifact has been captured")
 	}
-	file, err := os.Open(w.lastScreenshot.Path)
+	file, err := os.Open(h.lastScreenshot.Path)
 	if err != nil {
 		return err
 	}
@@ -409,7 +456,7 @@ func (w *scenarioWorld) expectScreenshotArtifact() error {
 		return err
 	}
 	if info.Size() == 0 {
-		return fmt.Errorf("screenshot artifact is empty: %s", w.lastScreenshot.Path)
+		return fmt.Errorf("screenshot artifact is empty: %s", h.lastScreenshot.Path)
 	}
 	if _, err := png.DecodeConfig(file); err != nil {
 		return fmt.Errorf("decoding screenshot artifact: %w", err)
@@ -417,36 +464,36 @@ func (w *scenarioWorld) expectScreenshotArtifact() error {
 	return nil
 }
 
-func (w *scenarioWorld) exportTrace(name string) error {
+func (h *scenarioHarness) exportTrace(name string) error {
 	ctx, cancel := rpcContext()
 	defer cancel()
-	artifact, err := w.driver.ExportTrace(ctx, name)
+	artifact, err := h.driver.ExportTrace(ctx, name)
 	if err != nil {
 		return err
 	}
-	w.lastTrace = artifact
+	h.lastTrace = artifact
 	return nil
 }
 
-func (w *scenarioWorld) expectTraceArtifact() error {
-	if strings.TrimSpace(w.lastTrace.Path) == "" {
+func (h *scenarioHarness) expectTraceArtifact() error {
+	if strings.TrimSpace(h.lastTrace.Path) == "" {
 		return fmt.Errorf("no trace artifact has been exported")
 	}
-	info, err := os.Stat(w.lastTrace.Path)
+	info, err := os.Stat(h.lastTrace.Path)
 	if err != nil {
 		return err
 	}
 	if info.Size() == 0 {
-		return fmt.Errorf("trace artifact is empty: %s", w.lastTrace.Path)
+		return fmt.Errorf("trace artifact is empty: %s", h.lastTrace.Path)
 	}
 	return nil
 }
 
-func (w *scenarioWorld) expectTraceContains(fragment string) error {
-	if err := w.expectTraceArtifact(); err != nil {
+func (h *scenarioHarness) expectTraceContains(fragment string) error {
+	if err := h.expectTraceArtifact(); err != nil {
 		return err
 	}
-	data, err := os.ReadFile(w.lastTrace.Path)
+	data, err := os.ReadFile(h.lastTrace.Path)
 	if err != nil {
 		return err
 	}
@@ -456,18 +503,18 @@ func (w *scenarioWorld) expectTraceContains(fragment string) error {
 	return nil
 }
 
-func (w *scenarioWorld) refreshMetrics() (automation.MetricsSnapshot, error) {
+func (h *scenarioHarness) refreshMetrics() (automation.MetricsSnapshot, error) {
 	ctx, cancel := rpcContext()
 	defer cancel()
-	metrics, err := w.driver.GetMetrics(ctx)
+	metrics, err := h.driver.GetMetrics(ctx)
 	if err != nil {
 		return automation.MetricsSnapshot{}, err
 	}
-	w.lastMetrics = metrics
+	h.lastMetrics = metrics
 	return metrics, nil
 }
 
-func waitForDriver(address string, waitCh <-chan error, output *bytes.Buffer) (automationDriver, error) {
+func waitForDriver(address string, waitCh <-chan error, output *bytes.Buffer) startupResult {
 	deadline := time.Now().Add(startupTimeout)
 	for time.Now().Before(deadline) {
 		select {
@@ -475,7 +522,10 @@ func waitForDriver(address string, waitCh <-chan error, output *bytes.Buffer) (a
 			if err == nil {
 				err = fmt.Errorf("automation session exited before gRPC became ready")
 			}
-			return nil, fmt.Errorf("%w\n%s", err, strings.TrimSpace(output.String()))
+			return startupResult{
+				waitConsumed: true,
+				err:          fmt.Errorf("%w\n%s", err, strings.TrimSpace(output.String())),
+			}
 		default:
 		}
 
@@ -490,13 +540,15 @@ func waitForDriver(address string, waitCh <-chan error, output *bytes.Buffer) (a
 			_, readinessErr := driver.GetReadiness(readinessCtx)
 			readinessCancel()
 			if readinessErr == nil {
-				return driver, nil
+				return startupResult{driver: driver}
 			}
 			_ = driver.Close()
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	return nil, fmt.Errorf("automation session did not become ready within %s\n%s", startupTimeout, strings.TrimSpace(output.String()))
+	return startupResult{
+		err: fmt.Errorf("automation session did not become ready within %s\n%s", startupTimeout, strings.TrimSpace(output.String())),
+	}
 }
 
 func gogoxelBinaryPath() (string, error) {
@@ -528,6 +580,90 @@ func reserveLoopbackAddress() (string, error) {
 
 func rpcContext() (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), defaultRPCDeadline)
+}
+
+func scenarioArtifactDir(subdir string) (string, bool, error) {
+	subdir = sanitizeArtifactBaseName(subdir)
+	artifactRoot := strings.TrimSpace(os.Getenv("GOGOXEL_BDD_ARTIFACT_DIR"))
+	if artifactRoot == "" {
+		dir, err := os.MkdirTemp("", fmt.Sprintf("gogoxel-bdd-artifacts-%s-", subdir))
+		return dir, true, err
+	}
+	if !filepath.IsAbs(artifactRoot) {
+		artifactRoot = filepath.Join(workspaceRoot(), artifactRoot)
+	}
+	artifactDir := filepath.Join(artifactRoot, subdir)
+	if err := os.MkdirAll(artifactDir, 0o755); err != nil {
+		return "", false, err
+	}
+	return artifactDir, false, nil
+}
+
+func cleanupScenarioArtifacts(dir string, cleanup bool) {
+	if cleanup && dir != "" {
+		_ = os.RemoveAll(dir)
+	}
+}
+
+func scenarioArtifactSubdir(scenario *godog.Scenario) string {
+	if scenario == nil {
+		return "scenario"
+	}
+	return sanitizeArtifactBaseName(scenario.Name)
+}
+
+func traceNameForScenario(scenario *godog.Scenario) string {
+	if scenario == nil || !hasScenarioTag(scenario, "@trace") {
+		return ""
+	}
+	return sanitizeArtifactBaseName(scenario.Name)
+}
+
+func hasScenarioTag(scenario *godog.Scenario, target string) bool {
+	if scenario == nil {
+		return false
+	}
+	for _, tag := range scenario.Tags {
+		if tag != nil && tag.Name == target {
+			return true
+		}
+	}
+	return false
+}
+
+func sanitizeArtifactBaseName(value string) string {
+	name := strings.ToLower(strings.TrimSpace(value))
+	replacer := strings.NewReplacer(
+		" ", "-",
+		"/", "-",
+		"\\", "-",
+		":", "-",
+		"\t", "-",
+		"\n", "-",
+	)
+	name = replacer.Replace(name)
+	var builder strings.Builder
+	lastDash := false
+	for _, r := range name {
+		isLetter := r >= 'a' && r <= 'z'
+		isDigit := r >= '0' && r <= '9'
+		if isLetter || isDigit {
+			builder.WriteRune(r)
+			lastDash = false
+			continue
+		}
+		if r == '-' || r == '_' {
+			if !lastDash && builder.Len() > 0 {
+				builder.WriteByte('-')
+				lastDash = true
+			}
+		}
+	}
+	name = strings.Trim(builder.String(), "-")
+	if name == "" {
+		return "artifact"
+	}
+	return name
 }
 
 func workspaceRoot() string {

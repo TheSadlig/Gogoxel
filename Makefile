@@ -10,9 +10,11 @@ PKG_CONFIG_CFLAGS := $(shell pkg-config --cflags glfw3 vulkan)
 RUN_ENV := GODEBUG=cgocheck=0
 PROTO_SRC := api/proto/gogoxel/automation/v1/automation.proto
 GODOG_TAGS ?= ~@gpu
+BDD_GPU ?=
+BDD_ARTIFACT_DIR ?= $(CURDIR)/.artifacts/godog
 RUN_ARGS ?=
 
-.PHONY: headers shaders proto build run clean test test-godog test-gpu-artifacts test-perf
+.PHONY: headers shaders proto build run clean test test-godog test-godog-artifacts
 
 headers: $(VULKAN_HEADER)
 
@@ -60,13 +62,14 @@ test:
 	go test ./...
 
 test-godog:
-	GODOG_TAGS='$(GODOG_TAGS)' go test -tags=godog ./test/bdd
+	GOGOXEL_BDD_GPU='$(BDD_GPU)' GODOG_TAGS='$(GODOG_TAGS)' go test -tags=godog ./test/bdd
 
-test-gpu-artifacts:
-	GOGOXEL_BDD_GPU=1 GODOG_TAGS='@gpu&&~@perf' go test -tags=godog ./test/bdd
-
-test-perf:
-	GOGOXEL_BDD_GPU=1 GODOG_TAGS='@perf' go test -tags=godog ./test/bdd
+test-godog-artifacts:
+	rm -rf '$(BDD_ARTIFACT_DIR)/hidden-window'
+	mkdir -p '$(BDD_ARTIFACT_DIR)/hidden-window'
+	GOGOXEL_BDD_GPU='1' GOGOXEL_BDD_ARTIFACT_DIR='$(BDD_ARTIFACT_DIR)/hidden-window' GODOG_TAGS='@gpu&&~@perf' go test -v -tags=godog ./test/bdd
+	@printf 'Artifacts written to %s\n' '$(BDD_ARTIFACT_DIR)/hidden-window'
+	@find '$(BDD_ARTIFACT_DIR)/hidden-window' -mindepth 2 -type f \( -name '*.png' -o -name '*.jsonl' \) -print | sort
 
 clean:
 	rm -f $(SHADER_SPV)

@@ -38,7 +38,7 @@ The gRPC `Stop` RPC requests shutdown through the automation host and closes the
 The Godog suite lives under `test/bdd` and drives the real binary over gRPC.
 
 - `test/features/movement.feature` covers deterministic headless movement and trace export.
-- `test/features/artifacts.feature` covers renderer-backed screenshot capture and is tagged `@gpu`.
+- `test/features/artifacts.feature` covers renderer-backed screenshot capture with one technical scenario per generator and is tagged `@gpu @trace`.
 - `test/features/performance.feature` covers renderer metrics and is tagged `@gpu @perf`.
 
 By default, the GPU-tagged scenarios are excluded. Enable them explicitly when a Vulkan-capable display environment is available.
@@ -48,7 +48,12 @@ By default, the GPU-tagged scenarios are excluded. Enable them explicitly when a
 - `make proto` regenerates protobuf and gRPC stubs.
 - `make test` runs the Go unit and package tests.
 - `make test-godog` runs the default headless Godog slice.
-- `make test-gpu-artifacts` runs the hidden-window screenshot scenario.
-- `make test-perf` runs the hidden-window performance scenario.
+- `make test-godog BDD_GPU=1 GODOG_TAGS='@gpu&&~@perf'` runs the hidden-window screenshot scenarios.
+- `make test-godog BDD_GPU=1 GODOG_TAGS='@perf'` runs the hidden-window performance scenario.
+- `make test-godog-artifacts` runs the hidden-window screenshot feature end to end, preserves the per-scenario PNGs and trace JSONL files under `.artifacts/godog/hidden-window/<scenario>/`, and prints the file paths.
 
-GPU-tagged BDD targets set `GOGOXEL_BDD_GPU=1` automatically because the suite intentionally skips those scenarios unless that environment flag is present.
+GPU-tagged BDD runs require `BDD_GPU=1` because the suite intentionally skips those scenarios unless renderer-backed validation is requested explicitly.
+
+Set `BDD_ARTIFACT_DIR=/absolute/or/relative/path` to redirect preserved Godog artifacts to a different location.
+
+Scenarios tagged `@trace` automatically export a JSONL trace artifact named from the scenario title during teardown, and each scenario writes into its own artifact subdirectory, so traces remain controlled from the feature file without requiring an explicit step.

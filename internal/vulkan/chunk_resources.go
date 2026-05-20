@@ -276,11 +276,13 @@ func (r *Renderer) createChunkDescriptorSet(chunkBindings *ChunkBindings, chunk 
 		PoolSizeCount: uint32(len(poolSizes)),
 		PPoolSizes:    poolSizes,
 	}
-	if err := withPinnedValue(&chunk.descriptorPool, func() error {
-		return vk.Error(vk.CreateDescriptorPool(r.device, &poolCreateInfo, nil, &chunk.descriptorPool))
+	var descriptorPool vk.DescriptorPool
+	if err := withPinnedValue(&descriptorPool, func() error {
+		return vk.Error(vk.CreateDescriptorPool(r.device, &poolCreateInfo, nil, &descriptorPool))
 	}); err != nil {
 		return fmt.Errorf("creating chunk descriptor pool: %w", err)
 	}
+	chunk.descriptorPool = descriptorPool
 
 	setLayouts := []vk.DescriptorSetLayout{chunkBindings.Layout()}
 	allocateInfo := vk.DescriptorSetAllocateInfo{
@@ -289,11 +291,13 @@ func (r *Renderer) createChunkDescriptorSet(chunkBindings *ChunkBindings, chunk 
 		DescriptorSetCount: 1,
 		PSetLayouts:        setLayouts,
 	}
-	if err := withPinnedValue(&chunk.DescriptorSet, func() error {
-		return vk.Error(vk.AllocateDescriptorSets(r.device, &allocateInfo, &chunk.DescriptorSet))
+	var descriptorSet vk.DescriptorSet
+	if err := withPinnedValue(&descriptorSet, func() error {
+		return vk.Error(vk.AllocateDescriptorSets(r.device, &allocateInfo, &descriptorSet))
 	}); err != nil {
 		return fmt.Errorf("allocating chunk descriptor set: %w", err)
 	}
+	chunk.DescriptorSet = descriptorSet
 
 	bufferInfos := []vk.DescriptorBufferInfo{{
 		Buffer: chunk.buffer,
