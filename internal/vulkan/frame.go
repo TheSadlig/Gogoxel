@@ -108,6 +108,10 @@ func (r *Renderer) createSyncObjects() error {
 }
 
 func (r *Renderer) DrawFrame(record func(*Frame) error) error {
+	return r.drawFrame(record, nil)
+}
+
+func (r *Renderer) drawFrame(record func(*Frame) error, afterRecord func(*Frame) error) error {
 	if record == nil {
 		return errors.New("draw callback is required")
 	}
@@ -138,7 +142,7 @@ func (r *Renderer) DrawFrame(record func(*Frame) error) error {
 		return fmt.Errorf("resetting in-flight fence: %w", err)
 	}
 
-	if err := r.recordCommandBuffer(currentFrame, imageIndex, record); err != nil {
+	if err := r.recordCommandBuffer(currentFrame, imageIndex, record, afterRecord); err != nil {
 		return err
 	}
 
@@ -182,7 +186,7 @@ func (r *Renderer) DrawFrame(record func(*Frame) error) error {
 	return nil
 }
 
-func (r *Renderer) recordCommandBuffer(frameSlot int, imageIndex uint32, record func(*Frame) error) error {
+func (r *Renderer) recordCommandBuffer(frameSlot int, imageIndex uint32, record func(*Frame) error, afterRecord func(*Frame) error) error {
 	commandBuffer := r.commandBuffers[imageIndex]
 	if err := vk.Error(vk.ResetCommandBuffer(commandBuffer, 0)); err != nil {
 		return fmt.Errorf("resetting command buffer %d: %w", imageIndex, err)
@@ -209,6 +213,11 @@ func (r *Renderer) recordCommandBuffer(frameSlot int, imageIndex uint32, record 
 	}
 
 	frame.EndRenderPass()
+	if afterRecord != nil {
+		if err := afterRecord(frame); err != nil {
+			return err
+		}
+	}
 
 	if err := vk.Error(vk.EndCommandBuffer(commandBuffer)); err != nil {
 		return fmt.Errorf("ending command buffer %d: %w", imageIndex, err)

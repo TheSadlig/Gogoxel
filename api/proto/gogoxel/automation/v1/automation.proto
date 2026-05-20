@@ -1,0 +1,204 @@
+syntax = "proto3";
+
+package gogoxel.automation.v1;
+
+option go_package = "Gogoxel/internal/automation/pb;automationpb";
+
+message Empty {}
+
+message Vector3 {
+  float x = 1;
+  float y = 2;
+  float z = 3;
+}
+
+message Camera {
+  Vector3 position = 1;
+  float yaw_deg = 2;
+  float pitch_deg = 3;
+  float fov_deg = 4;
+}
+
+message Readiness {
+  bool engine_initialized = 1;
+  bool renderer_initialized = 2;
+  bool scene_loaded = 3;
+  bool streaming_planned = 4;
+  bool streaming_settled = 5;
+}
+
+message WaitCriteria {
+  bool require_renderer = 1;
+  bool require_scene_loaded = 2;
+  bool require_streaming_settled = 3;
+  uint32 max_ticks = 4;
+}
+
+message MetricsSnapshot {
+  Camera camera = 1;
+  string current_generator = 2;
+  uint64 ram_bytes = 3;
+  uint64 vram_bytes = 4;
+  uint64 chunk_ram_bytes = 5;
+  uint64 node_count = 6;
+  uint64 brick_count = 7;
+  uint64 world_size = 8;
+  uint64 resident_brick_count = 9;
+  bool streaming_desired_ready = 10;
+  uint64 streaming_pending_desired_count = 11;
+  uint64 streaming_resident_limit = 12;
+  uint64 streaming_upload_budget = 13;
+  string present_mode = 14;
+  string renderer_device = 15;
+  double average_fps = 16;
+  double average_frame_time_ms = 17;
+  double p95_frame_time_ms = 18;
+  uint64 frame_sample_count = 19;
+}
+
+message Artifact {
+  string kind = 1;
+  string requested_name = 2;
+  string path = 3;
+  string format = 4;
+}
+
+enum ActionState {
+  ACTION_STATE_UNSPECIFIED = 0;
+  ACTION_STATE_PRESS = 1;
+  ACTION_STATE_RELEASE = 2;
+}
+
+message HealthResponse {
+  Readiness readiness = 1;
+}
+
+message GetCameraResponse {
+  Camera camera = 1;
+}
+
+message GetMetricsResponse {
+  MetricsSnapshot metrics = 1;
+}
+
+message ResetEngineResponse {
+  Readiness readiness = 1;
+}
+
+message LoadGeneratorRequest {
+  string name = 1;
+}
+
+message LoadGeneratorResponse {
+  Readiness readiness = 1;
+}
+
+message SetCameraRequest {
+  Camera camera = 1;
+}
+
+message SetCameraResponse {
+  Camera camera = 1;
+}
+
+message SetSimulationTickRateRequest {
+  uint32 tick_rate_hz = 1;
+}
+
+message SetSimulationTickRateResponse {
+  uint32 tick_rate_hz = 1;
+}
+
+message InjectActionRequest {
+  string action = 1;
+  ActionState state = 2;
+}
+
+message InjectActionResponse {
+  Readiness readiness = 1;
+}
+
+message ClickUiElementRequest {
+  string logical_id = 1;
+}
+
+message ClickUiElementResponse {
+  Readiness readiness = 1;
+}
+
+message StepTicksRequest {
+  uint32 ticks = 1;
+}
+
+message StepTicksResponse {
+  uint32 ticks_executed = 1;
+  uint32 frames_executed = 2;
+  MetricsSnapshot metrics = 3;
+}
+
+message StepFramesRequest {
+  uint32 frames = 1;
+}
+
+message StepFramesResponse {
+  uint32 ticks_executed = 1;
+  uint32 frames_executed = 2;
+  MetricsSnapshot metrics = 3;
+}
+
+message WaitUntilReadyRequest {
+  WaitCriteria criteria = 1;
+}
+
+message WaitUntilReadyResponse {
+  Readiness readiness = 1;
+}
+
+message ResetMetricsWindowResponse {
+  MetricsSnapshot metrics = 1;
+}
+
+message StopResponse {
+  Readiness readiness = 1;
+}
+
+message CaptureScreenshotRequest {
+  string artifact_name = 1;
+}
+
+message CaptureScreenshotResponse {
+  Artifact artifact = 1;
+}
+
+message ExportTraceRequest {
+  string artifact_name = 1;
+}
+
+message ExportTraceResponse {
+  Artifact artifact = 1;
+}
+
+service AutomationReadService {
+  rpc Health(Empty) returns (HealthResponse);
+  rpc GetCamera(Empty) returns (GetCameraResponse);
+  rpc GetMetrics(Empty) returns (GetMetricsResponse);
+}
+
+service AutomationControlService {
+  rpc ResetEngine(Empty) returns (ResetEngineResponse);
+  rpc LoadGenerator(LoadGeneratorRequest) returns (LoadGeneratorResponse);
+  rpc SetCamera(SetCameraRequest) returns (SetCameraResponse);
+  rpc SetSimulationTickRate(SetSimulationTickRateRequest) returns (SetSimulationTickRateResponse);
+  rpc InjectAction(InjectActionRequest) returns (InjectActionResponse);
+  rpc ClickUiElement(ClickUiElementRequest) returns (ClickUiElementResponse);
+  rpc StepTicks(StepTicksRequest) returns (StepTicksResponse);
+  rpc StepFrames(StepFramesRequest) returns (StepFramesResponse);
+  rpc WaitUntilReady(WaitUntilReadyRequest) returns (WaitUntilReadyResponse);
+  rpc ResetMetricsWindow(Empty) returns (ResetMetricsWindowResponse);
+  rpc Stop(Empty) returns (StopResponse);
+}
+
+service AutomationArtifactService {
+  rpc CaptureScreenshot(CaptureScreenshotRequest) returns (CaptureScreenshotResponse);
+  rpc ExportTrace(ExportTraceRequest) returns (ExportTraceResponse);
+}

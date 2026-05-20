@@ -12,7 +12,15 @@ type Window struct {
 	handle *glfw.Window
 }
 
+type WindowOptions struct {
+	Visible bool
+}
+
 func NewWindow(title string, width, height int) (*Window, error) {
+	return NewWindowWithOptions(title, width, height, WindowOptions{Visible: true})
+}
+
+func NewWindowWithOptions(title string, width, height int, options WindowOptions) (*Window, error) {
 	if err := glfw.Init(); err != nil {
 		return nil, fmt.Errorf("initializing GLFW: %w", err)
 	}
@@ -34,6 +42,11 @@ func NewWindow(title string, width, height int) (*Window, error) {
 
 	glfw.WindowHint(glfw.ClientAPI, glfw.NoAPI)
 	glfw.WindowHint(glfw.Resizable, glfw.False)
+	if options.Visible {
+		glfw.WindowHint(glfw.Visible, glfw.True)
+	} else {
+		glfw.WindowHint(glfw.Visible, glfw.False)
+	}
 
 	handle, err := glfw.CreateWindow(width, height, title, nil, nil)
 	if err != nil {
@@ -66,6 +79,12 @@ func (w *Window) IsIconified() bool {
 func (w *Window) SetTitle(title string) {
 	if w.handle != nil {
 		w.handle.SetTitle(title)
+	}
+}
+
+func (w *Window) RequestClose() {
+	if w.handle != nil {
+		w.handle.SetShouldClose(true)
 	}
 }
 
