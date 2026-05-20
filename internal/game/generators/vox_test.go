@@ -56,3 +56,24 @@ func TestRSVOStorageWordsStayInBounds(t *testing.T) {
 		}
 	}
 }
+
+func TestRSVOStorageWordsKeepSizeHeaderForEmptyScene(t *testing.T) {
+	model := rsvoModel{
+		topLevel: 5,
+		palette:  [255]uint32{1: 0x112233},
+	}
+
+	words := model.toStorageBufferWords(0)
+	if got, want := len(words), 2+world.PaletteSize; got != want {
+		t.Fatalf("len(words) = %d, want %d", got, want)
+	}
+	if got, want := words[0], uint32(1<<uint(model.topLevel)); got != want {
+		t.Fatalf("words[0] = %d, want %d", got, want)
+	}
+	if got := words[1]; got != 0 {
+		t.Fatalf("words[1] = %d, want 0", got)
+	}
+	if got, want := words[2+1], model.palette[1]; got != want {
+		t.Fatalf("palette word = %#x, want %#x", got, want)
+	}
+}

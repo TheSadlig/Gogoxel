@@ -19,6 +19,7 @@ type ChunkResources struct {
 	bufferMemory   vk.DeviceMemory
 	bufferBytes    vk.DeviceSize
 	brickPool      *brickPool
+	ownsBrickPool  bool
 	streamer       *brickStreamer
 }
 
@@ -46,7 +47,7 @@ func (r *Renderer) CreateChunkResourcesFromData(chunkBindings *ChunkBindings, da
 		chunk.Close()
 		return nil, err
 	}
-	if err := r.createChunkBrickPool(chunk); err != nil {
+	if err := r.createChunkBrickPool(chunk, false); err != nil {
 		chunk.Close()
 		return nil, err
 	}
@@ -76,7 +77,7 @@ func (r *Renderer) CreateChunkResourcesFromSVO(chunkBindings *ChunkBindings, svo
 		chunk.Close()
 		return nil, err
 	}
-	if err := r.createChunkBrickPool(chunk); err != nil {
+	if err := r.createChunkBrickPool(chunk, true); err != nil {
 		chunk.Close()
 		return nil, err
 	}
@@ -93,17 +94,40 @@ func (r *Renderer) createChunkStorageBuffer(chunk *ChunkResources, data []uint8,
 	return r.createChunkStorageBufferWords(chunk, packChunkData(data, palette))
 }
 
-func (r *Renderer) createChunkBrickPool(chunk *ChunkResources) error {
+func (r *Renderer) createChunkBrickPool(chunk *ChunkResources, dedicated bool) error {
 	if chunk == nil {
 		return errors.New("chunk resources are required")
 	}
 
-	pool, err := r.createBrickPool()
+	var (
+		pool *brickPool
+		err  error
+	)
+	if dedicated {
+		pool, err = r.createBrickPool()
+		chunk.ownsBrickPool = true
+	} else {
+		pool, err = r.sharedAirOnlyBrickPool()
+		chunk.ownsBrickPool = false
+	}
 	if err != nil {
 		return err
 	}
 	chunk.brickPool = pool
 	return nil
+}
+
+func (r *Renderer) sharedAirOnlyBrickPool() (*brickPool, error) {
+	if r.sharedAirPool != nil {
+		return r.sharedAirPool, nil
+	}
+
+	pool, err := r.createAirOnlyBrickPool()
+	if err != nil {
+		return nil, err
+	}
+	r.sharedAirPool = pool
+	return pool, nil
 }
 
 func (r *Renderer) createChunkStorageBufferWords(chunk *ChunkResources, words []uint32) error {
@@ -410,7 +434,7 @@ func (chunk *ChunkResources) Close() {
 	if chunk.streamer != nil {
 		chunk.streamer.Close()
 	}
-	if chunk.brickPool != nil {
+	if chunk.ownsBrickPool && chunk.brickPool != nil {
 		chunk.brickPool.Close(chunk.device)
 	}
 
@@ -422,7 +446,7 @@ func (chunk *ChunkResources) GPUBytes() uint64 {
 		return 0
 	}
 	brickPoolBytes := uint64(0)
-	if chunk.brickPool != nil {
+	if chunk.ownsBrickPool && chunk.brickPool != nil {
 		brickPoolBytes = chunk.brickPool.GPUBytes()
 	}
 	return uint64(chunk.bufferBytes) + brickPoolBytes

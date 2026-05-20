@@ -5,13 +5,9 @@ import "testing"
 // newTestBrickPool builds the in-memory state of a brickPool (no Vulkan
 // resources) for unit tests. It mirrors what createBrickPool sets up.
 func newTestBrickPool() *brickPool {
-	pool := &brickPool{
-		allocated: make([]bool, brickPoolCapacity),
-		freeList:  make([]uint32, 0, brickPoolCapacity-1),
-	}
-	pool.allocated[0] = true
-	for slot := brickPoolCapacity - 1; slot >= 1; slot-- {
-		pool.freeList = append(pool.freeList, slot)
+	pool, err := newBrickPoolState(brickPoolTextureEdge)
+	if err != nil {
+		panic(err)
 	}
 	return pool
 }
@@ -95,5 +91,17 @@ func TestBrickPoolCoordSlotRejectsOutOfRange(t *testing.T) {
 	}
 	if _, _, _, err := brickPoolSlotCoord(brickPoolCapacity); err == nil {
 		t.Fatal("brickPoolSlotCoord() error = nil, want out-of-range error")
+	}
+}
+
+func TestValidateBrickPoolTextureEdgeRejectsDeviceLimit(t *testing.T) {
+	if err := validateBrickPoolTextureEdge(brickPoolTextureEdge, brickPoolTextureEdge-1); err == nil {
+		t.Fatal("validateBrickPoolTextureEdge() error = nil, want device-limit error")
+	}
+}
+
+func TestValidateBrickPoolTextureEdgeAcceptsAirOnlyPool(t *testing.T) {
+	if err := validateBrickPoolTextureEdge(brickSizeVoxels, brickPoolTextureEdge); err != nil {
+		t.Fatalf("validateBrickPoolTextureEdge() error = %v", err)
 	}
 }

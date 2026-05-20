@@ -606,13 +606,14 @@ func (m rsvoModel) toStorageBufferWords(pruneLevel int) []uint32 {
 		}
 		totalNodes += int(count)
 	}
+	rootSize := 1 << uint(m.topLevel)
 	if totalNodes == 0 {
 		words := make([]uint32, 2+world.PaletteSize)
+		words[0] = uint32(rootSize)
 		copy(words[2:], m.palette[:])
 		return words
 	}
 
-	rootSize := 1 << uint(m.topLevel)
 	words := make([]uint32, 2, 2+totalNodes*2+world.PaletteSize)
 	words[0] = uint32(rootSize)
 	m.appendStorageBufferNode(&words, rsvoNode{level: m.topLevel, nodeIndex: 0, minX: 0, minY: 0, minZ: 0, size: rootSize}, pruneLevel)

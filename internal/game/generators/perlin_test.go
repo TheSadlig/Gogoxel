@@ -182,3 +182,20 @@ func TestPerlinDefaultScaleAvoidsFlatAbyssFloor(t *testing.T) {
 		t.Fatalf("floorColumns = %d, want at most %d", floorColumns, waterColumns/5)
 	}
 }
+
+func TestPerlinBlockIsUniformDeepSolidStartsBelowCaveBand(t *testing.T) {
+	columns := make([]terrainColumn, world.BrickSize*world.BrickSize)
+	for index := range columns {
+		columns[index] = terrainColumn{surface: perlinMaxCaveDepth + world.BrickSize - 1}
+	}
+	if perlinBlockIsUniformDeepSolid(columns, 0) {
+		t.Fatal("perlinBlockIsUniformDeepSolid() = true, want false at cave-depth boundary")
+	}
+
+	for index := range columns {
+		columns[index].surface++
+	}
+	if !perlinBlockIsUniformDeepSolid(columns, 0) {
+		t.Fatal("perlinBlockIsUniformDeepSolid() = false, want true below the cave band")
+	}
+}

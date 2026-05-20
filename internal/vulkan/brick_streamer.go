@@ -593,7 +593,7 @@ func (chunk *ChunkResources) patchNodePointer(frame *Frame, nodeIndex, value uin
 }
 
 func (chunk *ChunkResources) recordBrickUpload(frame *Frame, logicalIndex int, slot uint32) error {
-	brickX, brickY, brickZ, err := brickPoolSlotCoord(slot)
+	brickX, brickY, brickZ, err := chunk.brickPool.slotCoord(slot)
 	if err != nil {
 		return err
 	}
@@ -632,7 +632,7 @@ func (chunk *ChunkResources) recordBrickUpload(frame *Frame, logicalIndex int, s
 }
 
 func nodeChildPointerByteOffset(nodeIndex uint32) vk.DeviceSize {
-	return vk.DeviceSize((svoHeaderWordCount+int(nodeIndex)*2+1) * 4)
+	return vk.DeviceSize((svoHeaderWordCount + int(nodeIndex)*2 + 1) * 4)
 }
 
 func (r *Renderer) recordBufferShaderBarrier(commandBuffer vk.CommandBuffer, buffer vk.Buffer, size vk.DeviceSize) {

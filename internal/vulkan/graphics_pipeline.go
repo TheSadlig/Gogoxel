@@ -216,7 +216,7 @@ func (p *RaytracerPipeline) Bind(frame *Frame, camera platform.Camera, descripto
 	vk.CmdPushConstants(
 		frame.CommandBuffer,
 		p.layout,
-		vk.ShaderStageFlags(vk.ShaderStageVertexBit|vk.ShaderStageFragmentBit),
+		vk.ShaderStageFlags(vk.ShaderStageFragmentBit),
 		0,
 		uint32(unsafe.Sizeof(pushConstants)),
 		unsafe.Pointer(&pushConstants),

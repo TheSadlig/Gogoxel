@@ -61,7 +61,8 @@ type Renderer struct {
 	// stagingRings provides one persistent host-coherent staging buffer per
 	// in-flight frame slot. Sub-allocations are bump-pointer; the offset is
 	// reset whenever the slot's fence has been waited on.
-	stagingRings [maxFramesInFlight]*stagingRing
+	stagingRings  [maxFramesInFlight]*stagingRing
+	sharedAirPool *brickPool
 
 	instanceExtensions []string
 }
@@ -380,6 +381,10 @@ func (r *Renderer) cleanupVulkan() {
 		r.runDeferredReleases(frameSlot)
 	}
 	r.destroyStagingRings()
+	if r.sharedAirPool != nil {
+		r.sharedAirPool.Close(r.device)
+		r.sharedAirPool = nil
+	}
 
 	for _, semaphore := range r.imageAvailableSemaphores {
 		if !isZeroValue(semaphore) {

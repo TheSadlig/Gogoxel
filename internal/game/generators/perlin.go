@@ -9,9 +9,8 @@ import (
 )
 
 const (
-	perlinSceneSize          uint = 768
-	perlinMaxCaveDepth           = 48
-	perlinDeepSolidDepth         = 14
+	perlinSceneSize    uint = 768
+	perlinMaxCaveDepth      = 48
 )
 
 type perlinGenerator struct {
@@ -197,7 +196,7 @@ func sampleTerrainColumn(x, y, sceneScale float64, continentNoise, warpNoise, ri
 	rollingHills := continent * math.Pow(foothills, 1.15) * sceneScale * 0.09
 	mountainMass := math.Pow(ridge, 1.8) * math.Pow(continent, 1.35) * sceneScale * (0.14 + (1.0-erosion)*0.20)
 	microRelief := continent * alpineDetail * sceneScale * 0.035 * (0.40 + ridge*0.60)
-	basinCut := continent * (1.0-erosion) * (0.50 + (1.0-moisture)*0.50) * sceneScale * 0.03
+	basinCut := continent * (1.0 - erosion) * (0.50 + (1.0-moisture)*0.50) * sceneScale * 0.03
 
 	seaLevel := perlinSeaLevel(sceneScale)
 	oceanRelief := (foothills-0.5)*sceneScale*0.08 + (alpineDetail-0.5)*sceneScale*0.04
@@ -253,7 +252,7 @@ func perlinBlockIsUniformDeepSolid(columns []terrainColumn, blockBaseZ int) bool
 			return false
 		}
 		depthFromSurface := column.surface - blockTop
-		if depthFromSurface < perlinDeepSolidDepth || depthFromSurface <= perlinMaxCaveDepth {
+		if depthFromSurface <= perlinMaxCaveDepth {
 			return false
 		}
 	}

@@ -25,6 +25,17 @@ type stagingRing struct {
 // 128KB leaves headroom for alignment and future transfer growth.
 const stagingRingBytesPerSlot vk.DeviceSize = 128 * 1024
 
+func alignDeviceSize(value, alignment vk.DeviceSize) vk.DeviceSize {
+	if alignment <= 1 {
+		return value
+	}
+	remainder := value % alignment
+	if remainder == 0 {
+		return value
+	}
+	return value + alignment - remainder
+}
+
 func (r *Renderer) initStagingRings() error {
 	for slot := 0; slot < maxFramesInFlight; slot++ {
 		ring, err := r.createStagingRing(stagingRingBytesPerSlot)
@@ -125,7 +136,7 @@ func (r *Renderer) stagingAlloc(frameSlot int, size vk.DeviceSize, alignment vk.
 		alignment = 1
 	}
 
-	aligned := (ring.offset + alignment - 1) &^ (alignment - 1)
+	aligned := alignDeviceSize(ring.offset, alignment)
 	if aligned+size > ring.size {
 		return vk.NullBuffer, 0, nil, fmt.Errorf("staging ring slot %d exhausted (need %d, have %d)", frameSlot, size, ring.size-aligned)
 	}

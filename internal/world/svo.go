@@ -797,7 +797,7 @@ func (s *SVO) flattenTreeInto(root *stagingNode, nodeIdx uint32) {
 }
 
 func (s *SVO) StorageBufferWords() []uint32 {
-	if s == nil {
+	if s == nil || len(s.nodes) == 0 {
 		return nil
 	}
 

@@ -42,3 +42,34 @@ func TestBuildTreePreservesDescendantsForSingleVoxel(t *testing.T) {
 		t.Fatalf("palette[1] = %#x, want %#x", got, want)
 	}
 }
+
+func TestStorageBufferWordsReturnsNilForUninitializedSVO(t *testing.T) {
+	if words := NewSVO().StorageBufferWords(); words != nil {
+		t.Fatalf("StorageBufferWords() = %v, want nil", words)
+	}
+}
+
+func TestStorageBufferWordsKeepsLoadedEmptySceneRoot(t *testing.T) {
+	input := make([]uint32, storageWordCount+PaletteSize)
+	input[0] = 32
+	input[storageWordCount+1] = 0x445566
+
+	svo := NewSVO()
+	if err := svo.LoadStorageBufferWords(input, [3]uint32{}, [3]uint32{}, false); err != nil {
+		t.Fatalf("LoadStorageBufferWords() error = %v", err)
+	}
+
+	words := svo.StorageBufferWords()
+	if got, want := len(words), storageWordCount+2+PaletteSize; got != want {
+		t.Fatalf("len(words) = %d, want %d", got, want)
+	}
+	if got, want := words[0], uint32(32); got != want {
+		t.Fatalf("words[0] = %d, want %d", got, want)
+	}
+	if got, want := words[1], uint32(1); got != want {
+		t.Fatalf("words[1] = %d, want %d", got, want)
+	}
+	if got, want := words[storageWordCount+2+1], input[storageWordCount+1]; got != want {
+		t.Fatalf("palette word = %#x, want %#x", got, want)
+	}
+}

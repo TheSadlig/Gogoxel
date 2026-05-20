@@ -17,6 +17,9 @@ type brickPool struct {
 	image       vk.Image
 	imageMemory vk.DeviceMemory
 	imageView   vk.ImageView
+	textureEdge uint32
+	gridEdge    uint32
+	capacity    uint32
 
 	// allocated[slot] mirrors the free-list for double-free / bounds safety.
 	allocated []bool
@@ -27,17 +30,66 @@ type brickPool struct {
 	imageBytes vk.DeviceSize
 }
 
-func (r *Renderer) createBrickPool() (*brickPool, error) {
+func newBrickPoolState(textureEdge uint32) (*brickPool, error) {
+	if textureEdge < brickSizeVoxels || textureEdge%brickSizeVoxels != 0 {
+		return nil, fmt.Errorf("brick pool edge %d must be a multiple of brick size %d", textureEdge, brickSizeVoxels)
+	}
+
+	gridEdge := textureEdge / brickSizeVoxels
+	capacity := gridEdge * gridEdge * gridEdge
+	if capacity == 0 {
+		return nil, fmt.Errorf("brick pool edge %d yields zero capacity", textureEdge)
+	}
+
+	freeListCap := 0
+	if capacity > 1 {
+		freeListCap = int(capacity - 1)
+	}
+
 	pool := &brickPool{
-		allocated: make([]bool, brickPoolCapacity),
-		// Pre-size the free list. Slot 0 is reserved for air; push slots in
-		// descending order so Allocate hands them out in ascending order
-		// (preserves prior behaviour for tests).
-		freeList: make([]uint32, 0, brickPoolCapacity-1),
+		textureEdge: textureEdge,
+		gridEdge:    gridEdge,
+		capacity:    capacity,
+		allocated:   make([]bool, int(capacity)),
+		freeList:    make([]uint32, 0, freeListCap),
 	}
 	pool.allocated[0] = true
-	for slot := brickPoolCapacity - 1; slot >= 1; slot-- {
-		pool.freeList = append(pool.freeList, slot)
+	for slot := capacity; slot > 1; slot-- {
+		pool.freeList = append(pool.freeList, slot-1)
+	}
+
+	return pool, nil
+}
+
+func validateBrickPoolTextureEdge(textureEdge, maxImageDimension3D uint32) error {
+	if textureEdge < brickSizeVoxels || textureEdge%brickSizeVoxels != 0 {
+		return fmt.Errorf("brick pool edge %d must be a multiple of brick size %d", textureEdge, brickSizeVoxels)
+	}
+	if maxImageDimension3D > 0 && textureEdge > maxImageDimension3D {
+		return fmt.Errorf("brick pool edge %d exceeds device 3D image limit %d", textureEdge, maxImageDimension3D)
+	}
+	return nil
+}
+
+func (r *Renderer) createBrickPool() (*brickPool, error) {
+	return r.createBrickPoolWithEdge(brickPoolTextureEdge)
+}
+
+func (r *Renderer) createAirOnlyBrickPool() (*brickPool, error) {
+	return r.createBrickPoolWithEdge(brickSizeVoxels)
+}
+
+func (r *Renderer) createBrickPoolWithEdge(textureEdge uint32) (*brickPool, error) {
+	var properties vk.PhysicalDeviceProperties
+	vk.GetPhysicalDeviceProperties(r.physicalDevice, &properties)
+	properties.Deref()
+	if err := validateBrickPoolTextureEdge(textureEdge, properties.Limits.MaxImageDimension3D); err != nil {
+		return nil, err
+	}
+
+	pool, err := newBrickPoolState(textureEdge)
+	if err != nil {
+		return nil, err
 	}
 
 	imageCreateInfo := vk.ImageCreateInfo{
@@ -45,9 +97,9 @@ func (r *Renderer) createBrickPool() (*brickPool, error) {
 		ImageType: vk.ImageType3d,
 		Format:    vk.FormatR8Uint,
 		Extent: vk.Extent3D{
-			Width:  brickPoolTextureEdge,
-			Height: brickPoolTextureEdge,
-			Depth:  brickPoolTextureEdge,
+			Width:  pool.textureEdge,
+			Height: pool.textureEdge,
+			Depth:  pool.textureEdge,
 		},
 		MipLevels:     1,
 		ArrayLayers:   1,
@@ -203,7 +255,7 @@ func (pool *brickPool) Allocate() (uint32, error) {
 }
 
 func (pool *brickPool) Free(slot uint32) {
-	if pool == nil || slot == 0 || slot >= brickPoolCapacity {
+	if pool == nil || slot == 0 || slot >= pool.capacity {
 		return
 	}
 	if !pool.allocated[slot] {
@@ -214,22 +266,44 @@ func (pool *brickPool) Free(slot uint32) {
 	pool.freeList = append(pool.freeList, slot)
 }
 
+func (pool *brickPool) slotCoord(slot uint32) (uint32, uint32, uint32, error) {
+	if pool == nil {
+		return 0, 0, 0, fmt.Errorf("brick pool is nil")
+	}
+	return brickPoolSlotCoordForGrid(slot, pool.gridEdge)
+}
+
 func brickPoolSlotCoord(slot uint32) (uint32, uint32, uint32, error) {
-	if slot >= brickPoolCapacity {
+	return brickPoolSlotCoordForGrid(slot, brickPoolGridEdge)
+}
+
+func brickPoolSlotCoordForGrid(slot, gridEdge uint32) (uint32, uint32, uint32, error) {
+	if gridEdge == 0 {
+		return 0, 0, 0, fmt.Errorf("brick pool grid edge must be non-zero")
+	}
+	capacity := gridEdge * gridEdge * gridEdge
+	if slot >= capacity {
 		return 0, 0, 0, fmt.Errorf("brick pool slot %d out of range", slot)
 	}
 
-	x := slot % brickPoolGridEdge
-	y := (slot / brickPoolGridEdge) % brickPoolGridEdge
-	z := slot / (brickPoolGridEdge * brickPoolGridEdge)
+	x := slot % gridEdge
+	y := (slot / gridEdge) % gridEdge
+	z := slot / (gridEdge * gridEdge)
 	return x, y, z, nil
 }
 
 func brickPoolCoordSlot(x, y, z uint32) (uint32, error) {
-	if x >= brickPoolGridEdge || y >= brickPoolGridEdge || z >= brickPoolGridEdge {
+	return brickPoolCoordSlotForGrid(x, y, z, brickPoolGridEdge)
+}
+
+func brickPoolCoordSlotForGrid(x, y, z, gridEdge uint32) (uint32, error) {
+	if gridEdge == 0 {
+		return 0, fmt.Errorf("brick pool grid edge must be non-zero")
+	}
+	if x >= gridEdge || y >= gridEdge || z >= gridEdge {
 		return 0, fmt.Errorf("brick pool coordinate (%d,%d,%d) out of range", x, y, z)
 	}
-	return x + y*brickPoolGridEdge + z*brickPoolGridEdge*brickPoolGridEdge, nil
+	return x + y*gridEdge + z*gridEdge*gridEdge, nil
 }
 
 func (pool *brickPool) Close(device vk.Device) {
