@@ -14,7 +14,7 @@ BDD_GPU ?=
 BDD_ARTIFACT_DIR ?= $(CURDIR)/.artifacts/godog
 RUN_ARGS ?=
 
-.PHONY: headers shaders proto build run clean test test-godog test-godog-artifacts
+.PHONY: headers shaders proto build run clean test test-unit test-godog test-godog-artifacts
 
 headers: $(VULKAN_HEADER)
 
@@ -58,11 +58,13 @@ build: headers shaders
 run: headers shaders
 	$(RUN_ENV) CGO_CFLAGS="$(PKG_CONFIG_CFLAGS)" CGO_LDFLAGS="$(PKG_CONFIG_LIBS)" go run ./cmd/gogoxel $(RUN_ARGS)
 
-test:
+test: test-unit test-godog
+
+test-unit:
 	go test ./...
 
 test-godog:
-	GOGOXEL_BDD_GPU='$(BDD_GPU)' GODOG_TAGS='$(GODOG_TAGS)' go test -tags=godog ./test/bdd
+	GOGOXEL_BDD_GPU='$(BDD_GPU)' GODOG_TAGS='$(GODOG_TAGS)' go test -count=1 -tags=godog ./test/bdd
 
 test-godog-artifacts:
 	rm -rf '$(BDD_ARTIFACT_DIR)/hidden-window'

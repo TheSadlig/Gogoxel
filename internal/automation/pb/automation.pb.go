@@ -70,6 +70,55 @@ func (ActionState) EnumDescriptor() ([]byte, []int) {
 	return file_gogoxel_automation_v1_automation_proto_rawDescGZIP(), []int{0}
 }
 
+type EditMode int32
+
+const (
+	EditMode_EDIT_MODE_UNSPECIFIED EditMode = 0
+	EditMode_EDIT_MODE_PLACE       EditMode = 1
+	EditMode_EDIT_MODE_REMOVE      EditMode = 2
+)
+
+// Enum value maps for EditMode.
+var (
+	EditMode_name = map[int32]string{
+		0: "EDIT_MODE_UNSPECIFIED",
+		1: "EDIT_MODE_PLACE",
+		2: "EDIT_MODE_REMOVE",
+	}
+	EditMode_value = map[string]int32{
+		"EDIT_MODE_UNSPECIFIED": 0,
+		"EDIT_MODE_PLACE":       1,
+		"EDIT_MODE_REMOVE":      2,
+	}
+)
+
+func (x EditMode) Enum() *EditMode {
+	p := new(EditMode)
+	*p = x
+	return p
+}
+
+func (x EditMode) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (EditMode) Descriptor() protoreflect.EnumDescriptor {
+	return file_gogoxel_automation_v1_automation_proto_enumTypes[1].Descriptor()
+}
+
+func (EditMode) Type() protoreflect.EnumType {
+	return &file_gogoxel_automation_v1_automation_proto_enumTypes[1]
+}
+
+func (x EditMode) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use EditMode.Descriptor instead.
+func (EditMode) EnumDescriptor() ([]byte, []int) {
+	return file_gogoxel_automation_v1_automation_proto_rawDescGZIP(), []int{1}
+}
+
 type Empty struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -634,6 +683,118 @@ func (x *Artifact) GetFormat() string {
 	return ""
 }
 
+type NormalizedCursor struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	NormalizedX   float32                `protobuf:"fixed32,1,opt,name=normalized_x,json=normalizedX,proto3" json:"normalized_x,omitempty"`
+	NormalizedY   float32                `protobuf:"fixed32,2,opt,name=normalized_y,json=normalizedY,proto3" json:"normalized_y,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *NormalizedCursor) Reset() {
+	*x = NormalizedCursor{}
+	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *NormalizedCursor) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*NormalizedCursor) ProtoMessage() {}
+
+func (x *NormalizedCursor) ProtoReflect() protoreflect.Message {
+	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use NormalizedCursor.ProtoReflect.Descriptor instead.
+func (*NormalizedCursor) Descriptor() ([]byte, []int) {
+	return file_gogoxel_automation_v1_automation_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *NormalizedCursor) GetNormalizedX() float32 {
+	if x != nil {
+		return x.NormalizedX
+	}
+	return 0
+}
+
+func (x *NormalizedCursor) GetNormalizedY() float32 {
+	if x != nil {
+		return x.NormalizedY
+	}
+	return 0
+}
+
+type VoxelCoordinates struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	X             uint32                 `protobuf:"varint,1,opt,name=x,proto3" json:"x,omitempty"`
+	Y             uint32                 `protobuf:"varint,2,opt,name=y,proto3" json:"y,omitempty"`
+	Z             uint32                 `protobuf:"varint,3,opt,name=z,proto3" json:"z,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *VoxelCoordinates) Reset() {
+	*x = VoxelCoordinates{}
+	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *VoxelCoordinates) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VoxelCoordinates) ProtoMessage() {}
+
+func (x *VoxelCoordinates) ProtoReflect() protoreflect.Message {
+	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VoxelCoordinates.ProtoReflect.Descriptor instead.
+func (*VoxelCoordinates) Descriptor() ([]byte, []int) {
+	return file_gogoxel_automation_v1_automation_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *VoxelCoordinates) GetX() uint32 {
+	if x != nil {
+		return x.X
+	}
+	return 0
+}
+
+func (x *VoxelCoordinates) GetY() uint32 {
+	if x != nil {
+		return x.Y
+	}
+	return 0
+}
+
+func (x *VoxelCoordinates) GetZ() uint32 {
+	if x != nil {
+		return x.Z
+	}
+	return 0
+}
+
 type HealthResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Readiness     *Readiness             `protobuf:"bytes,1,opt,name=readiness,proto3" json:"readiness,omitempty"`
@@ -643,7 +804,7 @@ type HealthResponse struct {
 
 func (x *HealthResponse) Reset() {
 	*x = HealthResponse{}
-	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[7]
+	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -655,7 +816,7 @@ func (x *HealthResponse) String() string {
 func (*HealthResponse) ProtoMessage() {}
 
 func (x *HealthResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[7]
+	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -668,7 +829,7 @@ func (x *HealthResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HealthResponse.ProtoReflect.Descriptor instead.
 func (*HealthResponse) Descriptor() ([]byte, []int) {
-	return file_gogoxel_automation_v1_automation_proto_rawDescGZIP(), []int{7}
+	return file_gogoxel_automation_v1_automation_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *HealthResponse) GetReadiness() *Readiness {
@@ -687,7 +848,7 @@ type GetCameraResponse struct {
 
 func (x *GetCameraResponse) Reset() {
 	*x = GetCameraResponse{}
-	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[8]
+	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -699,7 +860,7 @@ func (x *GetCameraResponse) String() string {
 func (*GetCameraResponse) ProtoMessage() {}
 
 func (x *GetCameraResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[8]
+	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -712,7 +873,7 @@ func (x *GetCameraResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetCameraResponse.ProtoReflect.Descriptor instead.
 func (*GetCameraResponse) Descriptor() ([]byte, []int) {
-	return file_gogoxel_automation_v1_automation_proto_rawDescGZIP(), []int{8}
+	return file_gogoxel_automation_v1_automation_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *GetCameraResponse) GetCamera() *Camera {
@@ -731,7 +892,7 @@ type GetMetricsResponse struct {
 
 func (x *GetMetricsResponse) Reset() {
 	*x = GetMetricsResponse{}
-	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[9]
+	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -743,7 +904,7 @@ func (x *GetMetricsResponse) String() string {
 func (*GetMetricsResponse) ProtoMessage() {}
 
 func (x *GetMetricsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[9]
+	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -756,7 +917,7 @@ func (x *GetMetricsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetMetricsResponse.ProtoReflect.Descriptor instead.
 func (*GetMetricsResponse) Descriptor() ([]byte, []int) {
-	return file_gogoxel_automation_v1_automation_proto_rawDescGZIP(), []int{9}
+	return file_gogoxel_automation_v1_automation_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *GetMetricsResponse) GetMetrics() *MetricsSnapshot {
@@ -775,7 +936,7 @@ type ResetEngineResponse struct {
 
 func (x *ResetEngineResponse) Reset() {
 	*x = ResetEngineResponse{}
-	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[10]
+	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -787,7 +948,7 @@ func (x *ResetEngineResponse) String() string {
 func (*ResetEngineResponse) ProtoMessage() {}
 
 func (x *ResetEngineResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[10]
+	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -800,7 +961,7 @@ func (x *ResetEngineResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResetEngineResponse.ProtoReflect.Descriptor instead.
 func (*ResetEngineResponse) Descriptor() ([]byte, []int) {
-	return file_gogoxel_automation_v1_automation_proto_rawDescGZIP(), []int{10}
+	return file_gogoxel_automation_v1_automation_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *ResetEngineResponse) GetReadiness() *Readiness {
@@ -819,7 +980,7 @@ type LoadGeneratorRequest struct {
 
 func (x *LoadGeneratorRequest) Reset() {
 	*x = LoadGeneratorRequest{}
-	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[11]
+	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -831,7 +992,7 @@ func (x *LoadGeneratorRequest) String() string {
 func (*LoadGeneratorRequest) ProtoMessage() {}
 
 func (x *LoadGeneratorRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[11]
+	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -844,7 +1005,7 @@ func (x *LoadGeneratorRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LoadGeneratorRequest.ProtoReflect.Descriptor instead.
 func (*LoadGeneratorRequest) Descriptor() ([]byte, []int) {
-	return file_gogoxel_automation_v1_automation_proto_rawDescGZIP(), []int{11}
+	return file_gogoxel_automation_v1_automation_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *LoadGeneratorRequest) GetName() string {
@@ -863,7 +1024,7 @@ type LoadGeneratorResponse struct {
 
 func (x *LoadGeneratorResponse) Reset() {
 	*x = LoadGeneratorResponse{}
-	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[12]
+	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -875,7 +1036,7 @@ func (x *LoadGeneratorResponse) String() string {
 func (*LoadGeneratorResponse) ProtoMessage() {}
 
 func (x *LoadGeneratorResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[12]
+	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -888,7 +1049,7 @@ func (x *LoadGeneratorResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LoadGeneratorResponse.ProtoReflect.Descriptor instead.
 func (*LoadGeneratorResponse) Descriptor() ([]byte, []int) {
-	return file_gogoxel_automation_v1_automation_proto_rawDescGZIP(), []int{12}
+	return file_gogoxel_automation_v1_automation_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *LoadGeneratorResponse) GetReadiness() *Readiness {
@@ -907,7 +1068,7 @@ type SetCameraRequest struct {
 
 func (x *SetCameraRequest) Reset() {
 	*x = SetCameraRequest{}
-	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[13]
+	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -919,7 +1080,7 @@ func (x *SetCameraRequest) String() string {
 func (*SetCameraRequest) ProtoMessage() {}
 
 func (x *SetCameraRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[13]
+	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -932,7 +1093,7 @@ func (x *SetCameraRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetCameraRequest.ProtoReflect.Descriptor instead.
 func (*SetCameraRequest) Descriptor() ([]byte, []int) {
-	return file_gogoxel_automation_v1_automation_proto_rawDescGZIP(), []int{13}
+	return file_gogoxel_automation_v1_automation_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *SetCameraRequest) GetCamera() *Camera {
@@ -951,7 +1112,7 @@ type SetCameraResponse struct {
 
 func (x *SetCameraResponse) Reset() {
 	*x = SetCameraResponse{}
-	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[14]
+	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -963,7 +1124,7 @@ func (x *SetCameraResponse) String() string {
 func (*SetCameraResponse) ProtoMessage() {}
 
 func (x *SetCameraResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[14]
+	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -976,7 +1137,7 @@ func (x *SetCameraResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetCameraResponse.ProtoReflect.Descriptor instead.
 func (*SetCameraResponse) Descriptor() ([]byte, []int) {
-	return file_gogoxel_automation_v1_automation_proto_rawDescGZIP(), []int{14}
+	return file_gogoxel_automation_v1_automation_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *SetCameraResponse) GetCamera() *Camera {
@@ -995,7 +1156,7 @@ type SetSimulationTickRateRequest struct {
 
 func (x *SetSimulationTickRateRequest) Reset() {
 	*x = SetSimulationTickRateRequest{}
-	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[15]
+	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1007,7 +1168,7 @@ func (x *SetSimulationTickRateRequest) String() string {
 func (*SetSimulationTickRateRequest) ProtoMessage() {}
 
 func (x *SetSimulationTickRateRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[15]
+	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1020,7 +1181,7 @@ func (x *SetSimulationTickRateRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetSimulationTickRateRequest.ProtoReflect.Descriptor instead.
 func (*SetSimulationTickRateRequest) Descriptor() ([]byte, []int) {
-	return file_gogoxel_automation_v1_automation_proto_rawDescGZIP(), []int{15}
+	return file_gogoxel_automation_v1_automation_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *SetSimulationTickRateRequest) GetTickRateHz() uint32 {
@@ -1039,7 +1200,7 @@ type SetSimulationTickRateResponse struct {
 
 func (x *SetSimulationTickRateResponse) Reset() {
 	*x = SetSimulationTickRateResponse{}
-	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[16]
+	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1051,7 +1212,7 @@ func (x *SetSimulationTickRateResponse) String() string {
 func (*SetSimulationTickRateResponse) ProtoMessage() {}
 
 func (x *SetSimulationTickRateResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[16]
+	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1064,7 +1225,7 @@ func (x *SetSimulationTickRateResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetSimulationTickRateResponse.ProtoReflect.Descriptor instead.
 func (*SetSimulationTickRateResponse) Descriptor() ([]byte, []int) {
-	return file_gogoxel_automation_v1_automation_proto_rawDescGZIP(), []int{16}
+	return file_gogoxel_automation_v1_automation_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *SetSimulationTickRateResponse) GetTickRateHz() uint32 {
@@ -1084,7 +1245,7 @@ type InjectActionRequest struct {
 
 func (x *InjectActionRequest) Reset() {
 	*x = InjectActionRequest{}
-	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[17]
+	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1096,7 +1257,7 @@ func (x *InjectActionRequest) String() string {
 func (*InjectActionRequest) ProtoMessage() {}
 
 func (x *InjectActionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[17]
+	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1109,7 +1270,7 @@ func (x *InjectActionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InjectActionRequest.ProtoReflect.Descriptor instead.
 func (*InjectActionRequest) Descriptor() ([]byte, []int) {
-	return file_gogoxel_automation_v1_automation_proto_rawDescGZIP(), []int{17}
+	return file_gogoxel_automation_v1_automation_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *InjectActionRequest) GetAction() string {
@@ -1135,7 +1296,7 @@ type InjectActionResponse struct {
 
 func (x *InjectActionResponse) Reset() {
 	*x = InjectActionResponse{}
-	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[18]
+	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1147,7 +1308,7 @@ func (x *InjectActionResponse) String() string {
 func (*InjectActionResponse) ProtoMessage() {}
 
 func (x *InjectActionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[18]
+	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1160,7 +1321,7 @@ func (x *InjectActionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InjectActionResponse.ProtoReflect.Descriptor instead.
 func (*InjectActionResponse) Descriptor() ([]byte, []int) {
-	return file_gogoxel_automation_v1_automation_proto_rawDescGZIP(), []int{18}
+	return file_gogoxel_automation_v1_automation_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *InjectActionResponse) GetReadiness() *Readiness {
@@ -1168,6 +1329,214 @@ func (x *InjectActionResponse) GetReadiness() *Readiness {
 		return x.Readiness
 	}
 	return nil
+}
+
+type SetSelectedMaterialRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	MaterialName  string                 `protobuf:"bytes,1,opt,name=material_name,json=materialName,proto3" json:"material_name,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SetSelectedMaterialRequest) Reset() {
+	*x = SetSelectedMaterialRequest{}
+	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SetSelectedMaterialRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SetSelectedMaterialRequest) ProtoMessage() {}
+
+func (x *SetSelectedMaterialRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SetSelectedMaterialRequest.ProtoReflect.Descriptor instead.
+func (*SetSelectedMaterialRequest) Descriptor() ([]byte, []int) {
+	return file_gogoxel_automation_v1_automation_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *SetSelectedMaterialRequest) GetMaterialName() string {
+	if x != nil {
+		return x.MaterialName
+	}
+	return ""
+}
+
+type SetSelectedMaterialResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	MaterialName  string                 `protobuf:"bytes,1,opt,name=material_name,json=materialName,proto3" json:"material_name,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SetSelectedMaterialResponse) Reset() {
+	*x = SetSelectedMaterialResponse{}
+	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SetSelectedMaterialResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SetSelectedMaterialResponse) ProtoMessage() {}
+
+func (x *SetSelectedMaterialResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SetSelectedMaterialResponse.ProtoReflect.Descriptor instead.
+func (*SetSelectedMaterialResponse) Descriptor() ([]byte, []int) {
+	return file_gogoxel_automation_v1_automation_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *SetSelectedMaterialResponse) GetMaterialName() string {
+	if x != nil {
+		return x.MaterialName
+	}
+	return ""
+}
+
+type EditAtCursorRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Cursor        *NormalizedCursor      `protobuf:"bytes,1,opt,name=cursor,proto3" json:"cursor,omitempty"`
+	Mode          EditMode               `protobuf:"varint,2,opt,name=mode,proto3,enum=gogoxel.automation.v1.EditMode" json:"mode,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *EditAtCursorRequest) Reset() {
+	*x = EditAtCursorRequest{}
+	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EditAtCursorRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EditAtCursorRequest) ProtoMessage() {}
+
+func (x *EditAtCursorRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EditAtCursorRequest.ProtoReflect.Descriptor instead.
+func (*EditAtCursorRequest) Descriptor() ([]byte, []int) {
+	return file_gogoxel_automation_v1_automation_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *EditAtCursorRequest) GetCursor() *NormalizedCursor {
+	if x != nil {
+		return x.Cursor
+	}
+	return nil
+}
+
+func (x *EditAtCursorRequest) GetMode() EditMode {
+	if x != nil {
+		return x.Mode
+	}
+	return EditMode_EDIT_MODE_UNSPECIFIED
+}
+
+type EditAtCursorResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Changed       bool                   `protobuf:"varint,1,opt,name=changed,proto3" json:"changed,omitempty"`
+	HitVoxel      *VoxelCoordinates      `protobuf:"bytes,2,opt,name=hit_voxel,json=hitVoxel,proto3" json:"hit_voxel,omitempty"`
+	TargetVoxel   *VoxelCoordinates      `protobuf:"bytes,3,opt,name=target_voxel,json=targetVoxel,proto3" json:"target_voxel,omitempty"`
+	MaterialName  string                 `protobuf:"bytes,4,opt,name=material_name,json=materialName,proto3" json:"material_name,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *EditAtCursorResponse) Reset() {
+	*x = EditAtCursorResponse{}
+	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[24]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EditAtCursorResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EditAtCursorResponse) ProtoMessage() {}
+
+func (x *EditAtCursorResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[24]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EditAtCursorResponse.ProtoReflect.Descriptor instead.
+func (*EditAtCursorResponse) Descriptor() ([]byte, []int) {
+	return file_gogoxel_automation_v1_automation_proto_rawDescGZIP(), []int{24}
+}
+
+func (x *EditAtCursorResponse) GetChanged() bool {
+	if x != nil {
+		return x.Changed
+	}
+	return false
+}
+
+func (x *EditAtCursorResponse) GetHitVoxel() *VoxelCoordinates {
+	if x != nil {
+		return x.HitVoxel
+	}
+	return nil
+}
+
+func (x *EditAtCursorResponse) GetTargetVoxel() *VoxelCoordinates {
+	if x != nil {
+		return x.TargetVoxel
+	}
+	return nil
+}
+
+func (x *EditAtCursorResponse) GetMaterialName() string {
+	if x != nil {
+		return x.MaterialName
+	}
+	return ""
 }
 
 type ClickUiElementRequest struct {
@@ -1179,7 +1548,7 @@ type ClickUiElementRequest struct {
 
 func (x *ClickUiElementRequest) Reset() {
 	*x = ClickUiElementRequest{}
-	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[19]
+	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1191,7 +1560,7 @@ func (x *ClickUiElementRequest) String() string {
 func (*ClickUiElementRequest) ProtoMessage() {}
 
 func (x *ClickUiElementRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[19]
+	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1204,7 +1573,7 @@ func (x *ClickUiElementRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClickUiElementRequest.ProtoReflect.Descriptor instead.
 func (*ClickUiElementRequest) Descriptor() ([]byte, []int) {
-	return file_gogoxel_automation_v1_automation_proto_rawDescGZIP(), []int{19}
+	return file_gogoxel_automation_v1_automation_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *ClickUiElementRequest) GetLogicalId() string {
@@ -1223,7 +1592,7 @@ type ClickUiElementResponse struct {
 
 func (x *ClickUiElementResponse) Reset() {
 	*x = ClickUiElementResponse{}
-	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[20]
+	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1235,7 +1604,7 @@ func (x *ClickUiElementResponse) String() string {
 func (*ClickUiElementResponse) ProtoMessage() {}
 
 func (x *ClickUiElementResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[20]
+	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1248,7 +1617,7 @@ func (x *ClickUiElementResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClickUiElementResponse.ProtoReflect.Descriptor instead.
 func (*ClickUiElementResponse) Descriptor() ([]byte, []int) {
-	return file_gogoxel_automation_v1_automation_proto_rawDescGZIP(), []int{20}
+	return file_gogoxel_automation_v1_automation_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *ClickUiElementResponse) GetReadiness() *Readiness {
@@ -1267,7 +1636,7 @@ type StepTicksRequest struct {
 
 func (x *StepTicksRequest) Reset() {
 	*x = StepTicksRequest{}
-	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[21]
+	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1279,7 +1648,7 @@ func (x *StepTicksRequest) String() string {
 func (*StepTicksRequest) ProtoMessage() {}
 
 func (x *StepTicksRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[21]
+	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1292,7 +1661,7 @@ func (x *StepTicksRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StepTicksRequest.ProtoReflect.Descriptor instead.
 func (*StepTicksRequest) Descriptor() ([]byte, []int) {
-	return file_gogoxel_automation_v1_automation_proto_rawDescGZIP(), []int{21}
+	return file_gogoxel_automation_v1_automation_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *StepTicksRequest) GetTicks() uint32 {
@@ -1313,7 +1682,7 @@ type StepTicksResponse struct {
 
 func (x *StepTicksResponse) Reset() {
 	*x = StepTicksResponse{}
-	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[22]
+	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1325,7 +1694,7 @@ func (x *StepTicksResponse) String() string {
 func (*StepTicksResponse) ProtoMessage() {}
 
 func (x *StepTicksResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[22]
+	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1338,7 +1707,7 @@ func (x *StepTicksResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StepTicksResponse.ProtoReflect.Descriptor instead.
 func (*StepTicksResponse) Descriptor() ([]byte, []int) {
-	return file_gogoxel_automation_v1_automation_proto_rawDescGZIP(), []int{22}
+	return file_gogoxel_automation_v1_automation_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *StepTicksResponse) GetTicksExecuted() uint32 {
@@ -1371,7 +1740,7 @@ type StepFramesRequest struct {
 
 func (x *StepFramesRequest) Reset() {
 	*x = StepFramesRequest{}
-	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[23]
+	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1383,7 +1752,7 @@ func (x *StepFramesRequest) String() string {
 func (*StepFramesRequest) ProtoMessage() {}
 
 func (x *StepFramesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[23]
+	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1396,7 +1765,7 @@ func (x *StepFramesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StepFramesRequest.ProtoReflect.Descriptor instead.
 func (*StepFramesRequest) Descriptor() ([]byte, []int) {
-	return file_gogoxel_automation_v1_automation_proto_rawDescGZIP(), []int{23}
+	return file_gogoxel_automation_v1_automation_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *StepFramesRequest) GetFrames() uint32 {
@@ -1417,7 +1786,7 @@ type StepFramesResponse struct {
 
 func (x *StepFramesResponse) Reset() {
 	*x = StepFramesResponse{}
-	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[24]
+	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1429,7 +1798,7 @@ func (x *StepFramesResponse) String() string {
 func (*StepFramesResponse) ProtoMessage() {}
 
 func (x *StepFramesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[24]
+	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1442,7 +1811,7 @@ func (x *StepFramesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StepFramesResponse.ProtoReflect.Descriptor instead.
 func (*StepFramesResponse) Descriptor() ([]byte, []int) {
-	return file_gogoxel_automation_v1_automation_proto_rawDescGZIP(), []int{24}
+	return file_gogoxel_automation_v1_automation_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *StepFramesResponse) GetTicksExecuted() uint32 {
@@ -1475,7 +1844,7 @@ type WaitUntilReadyRequest struct {
 
 func (x *WaitUntilReadyRequest) Reset() {
 	*x = WaitUntilReadyRequest{}
-	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[25]
+	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1487,7 +1856,7 @@ func (x *WaitUntilReadyRequest) String() string {
 func (*WaitUntilReadyRequest) ProtoMessage() {}
 
 func (x *WaitUntilReadyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[25]
+	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1500,7 +1869,7 @@ func (x *WaitUntilReadyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WaitUntilReadyRequest.ProtoReflect.Descriptor instead.
 func (*WaitUntilReadyRequest) Descriptor() ([]byte, []int) {
-	return file_gogoxel_automation_v1_automation_proto_rawDescGZIP(), []int{25}
+	return file_gogoxel_automation_v1_automation_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *WaitUntilReadyRequest) GetCriteria() *WaitCriteria {
@@ -1519,7 +1888,7 @@ type WaitUntilReadyResponse struct {
 
 func (x *WaitUntilReadyResponse) Reset() {
 	*x = WaitUntilReadyResponse{}
-	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[26]
+	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1531,7 +1900,7 @@ func (x *WaitUntilReadyResponse) String() string {
 func (*WaitUntilReadyResponse) ProtoMessage() {}
 
 func (x *WaitUntilReadyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[26]
+	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1544,7 +1913,7 @@ func (x *WaitUntilReadyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WaitUntilReadyResponse.ProtoReflect.Descriptor instead.
 func (*WaitUntilReadyResponse) Descriptor() ([]byte, []int) {
-	return file_gogoxel_automation_v1_automation_proto_rawDescGZIP(), []int{26}
+	return file_gogoxel_automation_v1_automation_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *WaitUntilReadyResponse) GetReadiness() *Readiness {
@@ -1563,7 +1932,7 @@ type ResetMetricsWindowResponse struct {
 
 func (x *ResetMetricsWindowResponse) Reset() {
 	*x = ResetMetricsWindowResponse{}
-	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[27]
+	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1575,7 +1944,7 @@ func (x *ResetMetricsWindowResponse) String() string {
 func (*ResetMetricsWindowResponse) ProtoMessage() {}
 
 func (x *ResetMetricsWindowResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[27]
+	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1588,7 +1957,7 @@ func (x *ResetMetricsWindowResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResetMetricsWindowResponse.ProtoReflect.Descriptor instead.
 func (*ResetMetricsWindowResponse) Descriptor() ([]byte, []int) {
-	return file_gogoxel_automation_v1_automation_proto_rawDescGZIP(), []int{27}
+	return file_gogoxel_automation_v1_automation_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *ResetMetricsWindowResponse) GetMetrics() *MetricsSnapshot {
@@ -1607,7 +1976,7 @@ type StopResponse struct {
 
 func (x *StopResponse) Reset() {
 	*x = StopResponse{}
-	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[28]
+	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1619,7 +1988,7 @@ func (x *StopResponse) String() string {
 func (*StopResponse) ProtoMessage() {}
 
 func (x *StopResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[28]
+	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1632,7 +2001,7 @@ func (x *StopResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StopResponse.ProtoReflect.Descriptor instead.
 func (*StopResponse) Descriptor() ([]byte, []int) {
-	return file_gogoxel_automation_v1_automation_proto_rawDescGZIP(), []int{28}
+	return file_gogoxel_automation_v1_automation_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *StopResponse) GetReadiness() *Readiness {
@@ -1651,7 +2020,7 @@ type CaptureScreenshotRequest struct {
 
 func (x *CaptureScreenshotRequest) Reset() {
 	*x = CaptureScreenshotRequest{}
-	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[29]
+	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1663,7 +2032,7 @@ func (x *CaptureScreenshotRequest) String() string {
 func (*CaptureScreenshotRequest) ProtoMessage() {}
 
 func (x *CaptureScreenshotRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[29]
+	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1676,7 +2045,7 @@ func (x *CaptureScreenshotRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CaptureScreenshotRequest.ProtoReflect.Descriptor instead.
 func (*CaptureScreenshotRequest) Descriptor() ([]byte, []int) {
-	return file_gogoxel_automation_v1_automation_proto_rawDescGZIP(), []int{29}
+	return file_gogoxel_automation_v1_automation_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *CaptureScreenshotRequest) GetArtifactName() string {
@@ -1695,7 +2064,7 @@ type CaptureScreenshotResponse struct {
 
 func (x *CaptureScreenshotResponse) Reset() {
 	*x = CaptureScreenshotResponse{}
-	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[30]
+	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1707,7 +2076,7 @@ func (x *CaptureScreenshotResponse) String() string {
 func (*CaptureScreenshotResponse) ProtoMessage() {}
 
 func (x *CaptureScreenshotResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[30]
+	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1720,7 +2089,7 @@ func (x *CaptureScreenshotResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CaptureScreenshotResponse.ProtoReflect.Descriptor instead.
 func (*CaptureScreenshotResponse) Descriptor() ([]byte, []int) {
-	return file_gogoxel_automation_v1_automation_proto_rawDescGZIP(), []int{30}
+	return file_gogoxel_automation_v1_automation_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *CaptureScreenshotResponse) GetArtifact() *Artifact {
@@ -1739,7 +2108,7 @@ type ExportTraceRequest struct {
 
 func (x *ExportTraceRequest) Reset() {
 	*x = ExportTraceRequest{}
-	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[31]
+	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1751,7 +2120,7 @@ func (x *ExportTraceRequest) String() string {
 func (*ExportTraceRequest) ProtoMessage() {}
 
 func (x *ExportTraceRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[31]
+	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1764,7 +2133,7 @@ func (x *ExportTraceRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExportTraceRequest.ProtoReflect.Descriptor instead.
 func (*ExportTraceRequest) Descriptor() ([]byte, []int) {
-	return file_gogoxel_automation_v1_automation_proto_rawDescGZIP(), []int{31}
+	return file_gogoxel_automation_v1_automation_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *ExportTraceRequest) GetArtifactName() string {
@@ -1783,7 +2152,7 @@ type ExportTraceResponse struct {
 
 func (x *ExportTraceResponse) Reset() {
 	*x = ExportTraceResponse{}
-	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[32]
+	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1795,7 +2164,7 @@ func (x *ExportTraceResponse) String() string {
 func (*ExportTraceResponse) ProtoMessage() {}
 
 func (x *ExportTraceResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[32]
+	mi := &file_gogoxel_automation_v1_automation_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1808,7 +2177,7 @@ func (x *ExportTraceResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExportTraceResponse.ProtoReflect.Descriptor instead.
 func (*ExportTraceResponse) Descriptor() ([]byte, []int) {
-	return file_gogoxel_automation_v1_automation_proto_rawDescGZIP(), []int{32}
+	return file_gogoxel_automation_v1_automation_proto_rawDescGZIP(), []int{38}
 }
 
 func (x *ExportTraceResponse) GetArtifact() *Artifact {
@@ -1874,7 +2243,14 @@ const file_gogoxel_automation_v1_automation_proto_rawDesc = "" +
 	"\x04kind\x18\x01 \x01(\tR\x04kind\x12%\n" +
 	"\x0erequested_name\x18\x02 \x01(\tR\rrequestedName\x12\x12\n" +
 	"\x04path\x18\x03 \x01(\tR\x04path\x12\x16\n" +
-	"\x06format\x18\x04 \x01(\tR\x06format\"P\n" +
+	"\x06format\x18\x04 \x01(\tR\x06format\"X\n" +
+	"\x10NormalizedCursor\x12!\n" +
+	"\fnormalized_x\x18\x01 \x01(\x02R\vnormalizedX\x12!\n" +
+	"\fnormalized_y\x18\x02 \x01(\x02R\vnormalizedY\"<\n" +
+	"\x10VoxelCoordinates\x12\f\n" +
+	"\x01x\x18\x01 \x01(\rR\x01x\x12\f\n" +
+	"\x01y\x18\x02 \x01(\rR\x01y\x12\f\n" +
+	"\x01z\x18\x03 \x01(\rR\x01z\"P\n" +
 	"\x0eHealthResponse\x12>\n" +
 	"\treadiness\x18\x01 \x01(\v2 .gogoxel.automation.v1.ReadinessR\treadiness\"J\n" +
 	"\x11GetCameraResponse\x125\n" +
@@ -1901,7 +2277,19 @@ const file_gogoxel_automation_v1_automation_proto_rawDesc = "" +
 	"\x06action\x18\x01 \x01(\tR\x06action\x128\n" +
 	"\x05state\x18\x02 \x01(\x0e2\".gogoxel.automation.v1.ActionStateR\x05state\"V\n" +
 	"\x14InjectActionResponse\x12>\n" +
-	"\treadiness\x18\x01 \x01(\v2 .gogoxel.automation.v1.ReadinessR\treadiness\"6\n" +
+	"\treadiness\x18\x01 \x01(\v2 .gogoxel.automation.v1.ReadinessR\treadiness\"A\n" +
+	"\x1aSetSelectedMaterialRequest\x12#\n" +
+	"\rmaterial_name\x18\x01 \x01(\tR\fmaterialName\"B\n" +
+	"\x1bSetSelectedMaterialResponse\x12#\n" +
+	"\rmaterial_name\x18\x01 \x01(\tR\fmaterialName\"\x8b\x01\n" +
+	"\x13EditAtCursorRequest\x12?\n" +
+	"\x06cursor\x18\x01 \x01(\v2'.gogoxel.automation.v1.NormalizedCursorR\x06cursor\x123\n" +
+	"\x04mode\x18\x02 \x01(\x0e2\x1f.gogoxel.automation.v1.EditModeR\x04mode\"\xe7\x01\n" +
+	"\x14EditAtCursorResponse\x12\x18\n" +
+	"\achanged\x18\x01 \x01(\bR\achanged\x12D\n" +
+	"\thit_voxel\x18\x02 \x01(\v2'.gogoxel.automation.v1.VoxelCoordinatesR\bhitVoxel\x12J\n" +
+	"\ftarget_voxel\x18\x03 \x01(\v2'.gogoxel.automation.v1.VoxelCoordinatesR\vtargetVoxel\x12#\n" +
+	"\rmaterial_name\x18\x04 \x01(\tR\fmaterialName\"6\n" +
 	"\x15ClickUiElementRequest\x12\x1d\n" +
 	"\n" +
 	"logical_id\x18\x01 \x01(\tR\tlogicalId\"X\n" +
@@ -1938,18 +2326,25 @@ const file_gogoxel_automation_v1_automation_proto_rawDesc = "" +
 	"\vActionState\x12\x1c\n" +
 	"\x18ACTION_STATE_UNSPECIFIED\x10\x00\x12\x16\n" +
 	"\x12ACTION_STATE_PRESS\x10\x01\x12\x18\n" +
-	"\x14ACTION_STATE_RELEASE\x10\x022\x92\x02\n" +
+	"\x14ACTION_STATE_RELEASE\x10\x02*P\n" +
+	"\bEditMode\x12\x19\n" +
+	"\x15EDIT_MODE_UNSPECIFIED\x10\x00\x12\x13\n" +
+	"\x0fEDIT_MODE_PLACE\x10\x01\x12\x14\n" +
+	"\x10EDIT_MODE_REMOVE\x10\x022\x92\x02\n" +
 	"\x15AutomationReadService\x12M\n" +
 	"\x06Health\x12\x1c.gogoxel.automation.v1.Empty\x1a%.gogoxel.automation.v1.HealthResponse\x12S\n" +
 	"\tGetCamera\x12\x1c.gogoxel.automation.v1.Empty\x1a(.gogoxel.automation.v1.GetCameraResponse\x12U\n" +
 	"\n" +
-	"GetMetrics\x12\x1c.gogoxel.automation.v1.Empty\x1a).gogoxel.automation.v1.GetMetricsResponse2\x80\t\n" +
+	"GetMetrics\x12\x1c.gogoxel.automation.v1.Empty\x1a).gogoxel.automation.v1.GetMetricsResponse2\xe7\n" +
+	"\n" +
 	"\x18AutomationControlService\x12W\n" +
 	"\vResetEngine\x12\x1c.gogoxel.automation.v1.Empty\x1a*.gogoxel.automation.v1.ResetEngineResponse\x12j\n" +
 	"\rLoadGenerator\x12+.gogoxel.automation.v1.LoadGeneratorRequest\x1a,.gogoxel.automation.v1.LoadGeneratorResponse\x12^\n" +
 	"\tSetCamera\x12'.gogoxel.automation.v1.SetCameraRequest\x1a(.gogoxel.automation.v1.SetCameraResponse\x12\x82\x01\n" +
 	"\x15SetSimulationTickRate\x123.gogoxel.automation.v1.SetSimulationTickRateRequest\x1a4.gogoxel.automation.v1.SetSimulationTickRateResponse\x12g\n" +
-	"\fInjectAction\x12*.gogoxel.automation.v1.InjectActionRequest\x1a+.gogoxel.automation.v1.InjectActionResponse\x12m\n" +
+	"\fInjectAction\x12*.gogoxel.automation.v1.InjectActionRequest\x1a+.gogoxel.automation.v1.InjectActionResponse\x12|\n" +
+	"\x13SetSelectedMaterial\x121.gogoxel.automation.v1.SetSelectedMaterialRequest\x1a2.gogoxel.automation.v1.SetSelectedMaterialResponse\x12g\n" +
+	"\fEditAtCursor\x12*.gogoxel.automation.v1.EditAtCursorRequest\x1a+.gogoxel.automation.v1.EditAtCursorResponse\x12m\n" +
 	"\x0eClickUiElement\x12,.gogoxel.automation.v1.ClickUiElementRequest\x1a-.gogoxel.automation.v1.ClickUiElementResponse\x12^\n" +
 	"\tStepTicks\x12'.gogoxel.automation.v1.StepTicksRequest\x1a(.gogoxel.automation.v1.StepTicksResponse\x12a\n" +
 	"\n" +
@@ -1973,102 +2368,117 @@ func file_gogoxel_automation_v1_automation_proto_rawDescGZIP() []byte {
 	return file_gogoxel_automation_v1_automation_proto_rawDescData
 }
 
-var file_gogoxel_automation_v1_automation_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_gogoxel_automation_v1_automation_proto_msgTypes = make([]protoimpl.MessageInfo, 33)
+var file_gogoxel_automation_v1_automation_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
+var file_gogoxel_automation_v1_automation_proto_msgTypes = make([]protoimpl.MessageInfo, 39)
 var file_gogoxel_automation_v1_automation_proto_goTypes = []any{
 	(ActionState)(0),                      // 0: gogoxel.automation.v1.ActionState
-	(*Empty)(nil),                         // 1: gogoxel.automation.v1.Empty
-	(*Vector3)(nil),                       // 2: gogoxel.automation.v1.Vector3
-	(*Camera)(nil),                        // 3: gogoxel.automation.v1.Camera
-	(*Readiness)(nil),                     // 4: gogoxel.automation.v1.Readiness
-	(*WaitCriteria)(nil),                  // 5: gogoxel.automation.v1.WaitCriteria
-	(*MetricsSnapshot)(nil),               // 6: gogoxel.automation.v1.MetricsSnapshot
-	(*Artifact)(nil),                      // 7: gogoxel.automation.v1.Artifact
-	(*HealthResponse)(nil),                // 8: gogoxel.automation.v1.HealthResponse
-	(*GetCameraResponse)(nil),             // 9: gogoxel.automation.v1.GetCameraResponse
-	(*GetMetricsResponse)(nil),            // 10: gogoxel.automation.v1.GetMetricsResponse
-	(*ResetEngineResponse)(nil),           // 11: gogoxel.automation.v1.ResetEngineResponse
-	(*LoadGeneratorRequest)(nil),          // 12: gogoxel.automation.v1.LoadGeneratorRequest
-	(*LoadGeneratorResponse)(nil),         // 13: gogoxel.automation.v1.LoadGeneratorResponse
-	(*SetCameraRequest)(nil),              // 14: gogoxel.automation.v1.SetCameraRequest
-	(*SetCameraResponse)(nil),             // 15: gogoxel.automation.v1.SetCameraResponse
-	(*SetSimulationTickRateRequest)(nil),  // 16: gogoxel.automation.v1.SetSimulationTickRateRequest
-	(*SetSimulationTickRateResponse)(nil), // 17: gogoxel.automation.v1.SetSimulationTickRateResponse
-	(*InjectActionRequest)(nil),           // 18: gogoxel.automation.v1.InjectActionRequest
-	(*InjectActionResponse)(nil),          // 19: gogoxel.automation.v1.InjectActionResponse
-	(*ClickUiElementRequest)(nil),         // 20: gogoxel.automation.v1.ClickUiElementRequest
-	(*ClickUiElementResponse)(nil),        // 21: gogoxel.automation.v1.ClickUiElementResponse
-	(*StepTicksRequest)(nil),              // 22: gogoxel.automation.v1.StepTicksRequest
-	(*StepTicksResponse)(nil),             // 23: gogoxel.automation.v1.StepTicksResponse
-	(*StepFramesRequest)(nil),             // 24: gogoxel.automation.v1.StepFramesRequest
-	(*StepFramesResponse)(nil),            // 25: gogoxel.automation.v1.StepFramesResponse
-	(*WaitUntilReadyRequest)(nil),         // 26: gogoxel.automation.v1.WaitUntilReadyRequest
-	(*WaitUntilReadyResponse)(nil),        // 27: gogoxel.automation.v1.WaitUntilReadyResponse
-	(*ResetMetricsWindowResponse)(nil),    // 28: gogoxel.automation.v1.ResetMetricsWindowResponse
-	(*StopResponse)(nil),                  // 29: gogoxel.automation.v1.StopResponse
-	(*CaptureScreenshotRequest)(nil),      // 30: gogoxel.automation.v1.CaptureScreenshotRequest
-	(*CaptureScreenshotResponse)(nil),     // 31: gogoxel.automation.v1.CaptureScreenshotResponse
-	(*ExportTraceRequest)(nil),            // 32: gogoxel.automation.v1.ExportTraceRequest
-	(*ExportTraceResponse)(nil),           // 33: gogoxel.automation.v1.ExportTraceResponse
+	(EditMode)(0),                         // 1: gogoxel.automation.v1.EditMode
+	(*Empty)(nil),                         // 2: gogoxel.automation.v1.Empty
+	(*Vector3)(nil),                       // 3: gogoxel.automation.v1.Vector3
+	(*Camera)(nil),                        // 4: gogoxel.automation.v1.Camera
+	(*Readiness)(nil),                     // 5: gogoxel.automation.v1.Readiness
+	(*WaitCriteria)(nil),                  // 6: gogoxel.automation.v1.WaitCriteria
+	(*MetricsSnapshot)(nil),               // 7: gogoxel.automation.v1.MetricsSnapshot
+	(*Artifact)(nil),                      // 8: gogoxel.automation.v1.Artifact
+	(*NormalizedCursor)(nil),              // 9: gogoxel.automation.v1.NormalizedCursor
+	(*VoxelCoordinates)(nil),              // 10: gogoxel.automation.v1.VoxelCoordinates
+	(*HealthResponse)(nil),                // 11: gogoxel.automation.v1.HealthResponse
+	(*GetCameraResponse)(nil),             // 12: gogoxel.automation.v1.GetCameraResponse
+	(*GetMetricsResponse)(nil),            // 13: gogoxel.automation.v1.GetMetricsResponse
+	(*ResetEngineResponse)(nil),           // 14: gogoxel.automation.v1.ResetEngineResponse
+	(*LoadGeneratorRequest)(nil),          // 15: gogoxel.automation.v1.LoadGeneratorRequest
+	(*LoadGeneratorResponse)(nil),         // 16: gogoxel.automation.v1.LoadGeneratorResponse
+	(*SetCameraRequest)(nil),              // 17: gogoxel.automation.v1.SetCameraRequest
+	(*SetCameraResponse)(nil),             // 18: gogoxel.automation.v1.SetCameraResponse
+	(*SetSimulationTickRateRequest)(nil),  // 19: gogoxel.automation.v1.SetSimulationTickRateRequest
+	(*SetSimulationTickRateResponse)(nil), // 20: gogoxel.automation.v1.SetSimulationTickRateResponse
+	(*InjectActionRequest)(nil),           // 21: gogoxel.automation.v1.InjectActionRequest
+	(*InjectActionResponse)(nil),          // 22: gogoxel.automation.v1.InjectActionResponse
+	(*SetSelectedMaterialRequest)(nil),    // 23: gogoxel.automation.v1.SetSelectedMaterialRequest
+	(*SetSelectedMaterialResponse)(nil),   // 24: gogoxel.automation.v1.SetSelectedMaterialResponse
+	(*EditAtCursorRequest)(nil),           // 25: gogoxel.automation.v1.EditAtCursorRequest
+	(*EditAtCursorResponse)(nil),          // 26: gogoxel.automation.v1.EditAtCursorResponse
+	(*ClickUiElementRequest)(nil),         // 27: gogoxel.automation.v1.ClickUiElementRequest
+	(*ClickUiElementResponse)(nil),        // 28: gogoxel.automation.v1.ClickUiElementResponse
+	(*StepTicksRequest)(nil),              // 29: gogoxel.automation.v1.StepTicksRequest
+	(*StepTicksResponse)(nil),             // 30: gogoxel.automation.v1.StepTicksResponse
+	(*StepFramesRequest)(nil),             // 31: gogoxel.automation.v1.StepFramesRequest
+	(*StepFramesResponse)(nil),            // 32: gogoxel.automation.v1.StepFramesResponse
+	(*WaitUntilReadyRequest)(nil),         // 33: gogoxel.automation.v1.WaitUntilReadyRequest
+	(*WaitUntilReadyResponse)(nil),        // 34: gogoxel.automation.v1.WaitUntilReadyResponse
+	(*ResetMetricsWindowResponse)(nil),    // 35: gogoxel.automation.v1.ResetMetricsWindowResponse
+	(*StopResponse)(nil),                  // 36: gogoxel.automation.v1.StopResponse
+	(*CaptureScreenshotRequest)(nil),      // 37: gogoxel.automation.v1.CaptureScreenshotRequest
+	(*CaptureScreenshotResponse)(nil),     // 38: gogoxel.automation.v1.CaptureScreenshotResponse
+	(*ExportTraceRequest)(nil),            // 39: gogoxel.automation.v1.ExportTraceRequest
+	(*ExportTraceResponse)(nil),           // 40: gogoxel.automation.v1.ExportTraceResponse
 }
 var file_gogoxel_automation_v1_automation_proto_depIdxs = []int32{
-	2,  // 0: gogoxel.automation.v1.Camera.position:type_name -> gogoxel.automation.v1.Vector3
-	3,  // 1: gogoxel.automation.v1.MetricsSnapshot.camera:type_name -> gogoxel.automation.v1.Camera
-	4,  // 2: gogoxel.automation.v1.HealthResponse.readiness:type_name -> gogoxel.automation.v1.Readiness
-	3,  // 3: gogoxel.automation.v1.GetCameraResponse.camera:type_name -> gogoxel.automation.v1.Camera
-	6,  // 4: gogoxel.automation.v1.GetMetricsResponse.metrics:type_name -> gogoxel.automation.v1.MetricsSnapshot
-	4,  // 5: gogoxel.automation.v1.ResetEngineResponse.readiness:type_name -> gogoxel.automation.v1.Readiness
-	4,  // 6: gogoxel.automation.v1.LoadGeneratorResponse.readiness:type_name -> gogoxel.automation.v1.Readiness
-	3,  // 7: gogoxel.automation.v1.SetCameraRequest.camera:type_name -> gogoxel.automation.v1.Camera
-	3,  // 8: gogoxel.automation.v1.SetCameraResponse.camera:type_name -> gogoxel.automation.v1.Camera
+	3,  // 0: gogoxel.automation.v1.Camera.position:type_name -> gogoxel.automation.v1.Vector3
+	4,  // 1: gogoxel.automation.v1.MetricsSnapshot.camera:type_name -> gogoxel.automation.v1.Camera
+	5,  // 2: gogoxel.automation.v1.HealthResponse.readiness:type_name -> gogoxel.automation.v1.Readiness
+	4,  // 3: gogoxel.automation.v1.GetCameraResponse.camera:type_name -> gogoxel.automation.v1.Camera
+	7,  // 4: gogoxel.automation.v1.GetMetricsResponse.metrics:type_name -> gogoxel.automation.v1.MetricsSnapshot
+	5,  // 5: gogoxel.automation.v1.ResetEngineResponse.readiness:type_name -> gogoxel.automation.v1.Readiness
+	5,  // 6: gogoxel.automation.v1.LoadGeneratorResponse.readiness:type_name -> gogoxel.automation.v1.Readiness
+	4,  // 7: gogoxel.automation.v1.SetCameraRequest.camera:type_name -> gogoxel.automation.v1.Camera
+	4,  // 8: gogoxel.automation.v1.SetCameraResponse.camera:type_name -> gogoxel.automation.v1.Camera
 	0,  // 9: gogoxel.automation.v1.InjectActionRequest.state:type_name -> gogoxel.automation.v1.ActionState
-	4,  // 10: gogoxel.automation.v1.InjectActionResponse.readiness:type_name -> gogoxel.automation.v1.Readiness
-	4,  // 11: gogoxel.automation.v1.ClickUiElementResponse.readiness:type_name -> gogoxel.automation.v1.Readiness
-	6,  // 12: gogoxel.automation.v1.StepTicksResponse.metrics:type_name -> gogoxel.automation.v1.MetricsSnapshot
-	6,  // 13: gogoxel.automation.v1.StepFramesResponse.metrics:type_name -> gogoxel.automation.v1.MetricsSnapshot
-	5,  // 14: gogoxel.automation.v1.WaitUntilReadyRequest.criteria:type_name -> gogoxel.automation.v1.WaitCriteria
-	4,  // 15: gogoxel.automation.v1.WaitUntilReadyResponse.readiness:type_name -> gogoxel.automation.v1.Readiness
-	6,  // 16: gogoxel.automation.v1.ResetMetricsWindowResponse.metrics:type_name -> gogoxel.automation.v1.MetricsSnapshot
-	4,  // 17: gogoxel.automation.v1.StopResponse.readiness:type_name -> gogoxel.automation.v1.Readiness
-	7,  // 18: gogoxel.automation.v1.CaptureScreenshotResponse.artifact:type_name -> gogoxel.automation.v1.Artifact
-	7,  // 19: gogoxel.automation.v1.ExportTraceResponse.artifact:type_name -> gogoxel.automation.v1.Artifact
-	1,  // 20: gogoxel.automation.v1.AutomationReadService.Health:input_type -> gogoxel.automation.v1.Empty
-	1,  // 21: gogoxel.automation.v1.AutomationReadService.GetCamera:input_type -> gogoxel.automation.v1.Empty
-	1,  // 22: gogoxel.automation.v1.AutomationReadService.GetMetrics:input_type -> gogoxel.automation.v1.Empty
-	1,  // 23: gogoxel.automation.v1.AutomationControlService.ResetEngine:input_type -> gogoxel.automation.v1.Empty
-	12, // 24: gogoxel.automation.v1.AutomationControlService.LoadGenerator:input_type -> gogoxel.automation.v1.LoadGeneratorRequest
-	14, // 25: gogoxel.automation.v1.AutomationControlService.SetCamera:input_type -> gogoxel.automation.v1.SetCameraRequest
-	16, // 26: gogoxel.automation.v1.AutomationControlService.SetSimulationTickRate:input_type -> gogoxel.automation.v1.SetSimulationTickRateRequest
-	18, // 27: gogoxel.automation.v1.AutomationControlService.InjectAction:input_type -> gogoxel.automation.v1.InjectActionRequest
-	20, // 28: gogoxel.automation.v1.AutomationControlService.ClickUiElement:input_type -> gogoxel.automation.v1.ClickUiElementRequest
-	22, // 29: gogoxel.automation.v1.AutomationControlService.StepTicks:input_type -> gogoxel.automation.v1.StepTicksRequest
-	24, // 30: gogoxel.automation.v1.AutomationControlService.StepFrames:input_type -> gogoxel.automation.v1.StepFramesRequest
-	26, // 31: gogoxel.automation.v1.AutomationControlService.WaitUntilReady:input_type -> gogoxel.automation.v1.WaitUntilReadyRequest
-	1,  // 32: gogoxel.automation.v1.AutomationControlService.ResetMetricsWindow:input_type -> gogoxel.automation.v1.Empty
-	1,  // 33: gogoxel.automation.v1.AutomationControlService.Stop:input_type -> gogoxel.automation.v1.Empty
-	30, // 34: gogoxel.automation.v1.AutomationArtifactService.CaptureScreenshot:input_type -> gogoxel.automation.v1.CaptureScreenshotRequest
-	32, // 35: gogoxel.automation.v1.AutomationArtifactService.ExportTrace:input_type -> gogoxel.automation.v1.ExportTraceRequest
-	8,  // 36: gogoxel.automation.v1.AutomationReadService.Health:output_type -> gogoxel.automation.v1.HealthResponse
-	9,  // 37: gogoxel.automation.v1.AutomationReadService.GetCamera:output_type -> gogoxel.automation.v1.GetCameraResponse
-	10, // 38: gogoxel.automation.v1.AutomationReadService.GetMetrics:output_type -> gogoxel.automation.v1.GetMetricsResponse
-	11, // 39: gogoxel.automation.v1.AutomationControlService.ResetEngine:output_type -> gogoxel.automation.v1.ResetEngineResponse
-	13, // 40: gogoxel.automation.v1.AutomationControlService.LoadGenerator:output_type -> gogoxel.automation.v1.LoadGeneratorResponse
-	15, // 41: gogoxel.automation.v1.AutomationControlService.SetCamera:output_type -> gogoxel.automation.v1.SetCameraResponse
-	17, // 42: gogoxel.automation.v1.AutomationControlService.SetSimulationTickRate:output_type -> gogoxel.automation.v1.SetSimulationTickRateResponse
-	19, // 43: gogoxel.automation.v1.AutomationControlService.InjectAction:output_type -> gogoxel.automation.v1.InjectActionResponse
-	21, // 44: gogoxel.automation.v1.AutomationControlService.ClickUiElement:output_type -> gogoxel.automation.v1.ClickUiElementResponse
-	23, // 45: gogoxel.automation.v1.AutomationControlService.StepTicks:output_type -> gogoxel.automation.v1.StepTicksResponse
-	25, // 46: gogoxel.automation.v1.AutomationControlService.StepFrames:output_type -> gogoxel.automation.v1.StepFramesResponse
-	27, // 47: gogoxel.automation.v1.AutomationControlService.WaitUntilReady:output_type -> gogoxel.automation.v1.WaitUntilReadyResponse
-	28, // 48: gogoxel.automation.v1.AutomationControlService.ResetMetricsWindow:output_type -> gogoxel.automation.v1.ResetMetricsWindowResponse
-	29, // 49: gogoxel.automation.v1.AutomationControlService.Stop:output_type -> gogoxel.automation.v1.StopResponse
-	31, // 50: gogoxel.automation.v1.AutomationArtifactService.CaptureScreenshot:output_type -> gogoxel.automation.v1.CaptureScreenshotResponse
-	33, // 51: gogoxel.automation.v1.AutomationArtifactService.ExportTrace:output_type -> gogoxel.automation.v1.ExportTraceResponse
-	36, // [36:52] is the sub-list for method output_type
-	20, // [20:36] is the sub-list for method input_type
-	20, // [20:20] is the sub-list for extension type_name
-	20, // [20:20] is the sub-list for extension extendee
-	0,  // [0:20] is the sub-list for field type_name
+	5,  // 10: gogoxel.automation.v1.InjectActionResponse.readiness:type_name -> gogoxel.automation.v1.Readiness
+	9,  // 11: gogoxel.automation.v1.EditAtCursorRequest.cursor:type_name -> gogoxel.automation.v1.NormalizedCursor
+	1,  // 12: gogoxel.automation.v1.EditAtCursorRequest.mode:type_name -> gogoxel.automation.v1.EditMode
+	10, // 13: gogoxel.automation.v1.EditAtCursorResponse.hit_voxel:type_name -> gogoxel.automation.v1.VoxelCoordinates
+	10, // 14: gogoxel.automation.v1.EditAtCursorResponse.target_voxel:type_name -> gogoxel.automation.v1.VoxelCoordinates
+	5,  // 15: gogoxel.automation.v1.ClickUiElementResponse.readiness:type_name -> gogoxel.automation.v1.Readiness
+	7,  // 16: gogoxel.automation.v1.StepTicksResponse.metrics:type_name -> gogoxel.automation.v1.MetricsSnapshot
+	7,  // 17: gogoxel.automation.v1.StepFramesResponse.metrics:type_name -> gogoxel.automation.v1.MetricsSnapshot
+	6,  // 18: gogoxel.automation.v1.WaitUntilReadyRequest.criteria:type_name -> gogoxel.automation.v1.WaitCriteria
+	5,  // 19: gogoxel.automation.v1.WaitUntilReadyResponse.readiness:type_name -> gogoxel.automation.v1.Readiness
+	7,  // 20: gogoxel.automation.v1.ResetMetricsWindowResponse.metrics:type_name -> gogoxel.automation.v1.MetricsSnapshot
+	5,  // 21: gogoxel.automation.v1.StopResponse.readiness:type_name -> gogoxel.automation.v1.Readiness
+	8,  // 22: gogoxel.automation.v1.CaptureScreenshotResponse.artifact:type_name -> gogoxel.automation.v1.Artifact
+	8,  // 23: gogoxel.automation.v1.ExportTraceResponse.artifact:type_name -> gogoxel.automation.v1.Artifact
+	2,  // 24: gogoxel.automation.v1.AutomationReadService.Health:input_type -> gogoxel.automation.v1.Empty
+	2,  // 25: gogoxel.automation.v1.AutomationReadService.GetCamera:input_type -> gogoxel.automation.v1.Empty
+	2,  // 26: gogoxel.automation.v1.AutomationReadService.GetMetrics:input_type -> gogoxel.automation.v1.Empty
+	2,  // 27: gogoxel.automation.v1.AutomationControlService.ResetEngine:input_type -> gogoxel.automation.v1.Empty
+	15, // 28: gogoxel.automation.v1.AutomationControlService.LoadGenerator:input_type -> gogoxel.automation.v1.LoadGeneratorRequest
+	17, // 29: gogoxel.automation.v1.AutomationControlService.SetCamera:input_type -> gogoxel.automation.v1.SetCameraRequest
+	19, // 30: gogoxel.automation.v1.AutomationControlService.SetSimulationTickRate:input_type -> gogoxel.automation.v1.SetSimulationTickRateRequest
+	21, // 31: gogoxel.automation.v1.AutomationControlService.InjectAction:input_type -> gogoxel.automation.v1.InjectActionRequest
+	23, // 32: gogoxel.automation.v1.AutomationControlService.SetSelectedMaterial:input_type -> gogoxel.automation.v1.SetSelectedMaterialRequest
+	25, // 33: gogoxel.automation.v1.AutomationControlService.EditAtCursor:input_type -> gogoxel.automation.v1.EditAtCursorRequest
+	27, // 34: gogoxel.automation.v1.AutomationControlService.ClickUiElement:input_type -> gogoxel.automation.v1.ClickUiElementRequest
+	29, // 35: gogoxel.automation.v1.AutomationControlService.StepTicks:input_type -> gogoxel.automation.v1.StepTicksRequest
+	31, // 36: gogoxel.automation.v1.AutomationControlService.StepFrames:input_type -> gogoxel.automation.v1.StepFramesRequest
+	33, // 37: gogoxel.automation.v1.AutomationControlService.WaitUntilReady:input_type -> gogoxel.automation.v1.WaitUntilReadyRequest
+	2,  // 38: gogoxel.automation.v1.AutomationControlService.ResetMetricsWindow:input_type -> gogoxel.automation.v1.Empty
+	2,  // 39: gogoxel.automation.v1.AutomationControlService.Stop:input_type -> gogoxel.automation.v1.Empty
+	37, // 40: gogoxel.automation.v1.AutomationArtifactService.CaptureScreenshot:input_type -> gogoxel.automation.v1.CaptureScreenshotRequest
+	39, // 41: gogoxel.automation.v1.AutomationArtifactService.ExportTrace:input_type -> gogoxel.automation.v1.ExportTraceRequest
+	11, // 42: gogoxel.automation.v1.AutomationReadService.Health:output_type -> gogoxel.automation.v1.HealthResponse
+	12, // 43: gogoxel.automation.v1.AutomationReadService.GetCamera:output_type -> gogoxel.automation.v1.GetCameraResponse
+	13, // 44: gogoxel.automation.v1.AutomationReadService.GetMetrics:output_type -> gogoxel.automation.v1.GetMetricsResponse
+	14, // 45: gogoxel.automation.v1.AutomationControlService.ResetEngine:output_type -> gogoxel.automation.v1.ResetEngineResponse
+	16, // 46: gogoxel.automation.v1.AutomationControlService.LoadGenerator:output_type -> gogoxel.automation.v1.LoadGeneratorResponse
+	18, // 47: gogoxel.automation.v1.AutomationControlService.SetCamera:output_type -> gogoxel.automation.v1.SetCameraResponse
+	20, // 48: gogoxel.automation.v1.AutomationControlService.SetSimulationTickRate:output_type -> gogoxel.automation.v1.SetSimulationTickRateResponse
+	22, // 49: gogoxel.automation.v1.AutomationControlService.InjectAction:output_type -> gogoxel.automation.v1.InjectActionResponse
+	24, // 50: gogoxel.automation.v1.AutomationControlService.SetSelectedMaterial:output_type -> gogoxel.automation.v1.SetSelectedMaterialResponse
+	26, // 51: gogoxel.automation.v1.AutomationControlService.EditAtCursor:output_type -> gogoxel.automation.v1.EditAtCursorResponse
+	28, // 52: gogoxel.automation.v1.AutomationControlService.ClickUiElement:output_type -> gogoxel.automation.v1.ClickUiElementResponse
+	30, // 53: gogoxel.automation.v1.AutomationControlService.StepTicks:output_type -> gogoxel.automation.v1.StepTicksResponse
+	32, // 54: gogoxel.automation.v1.AutomationControlService.StepFrames:output_type -> gogoxel.automation.v1.StepFramesResponse
+	34, // 55: gogoxel.automation.v1.AutomationControlService.WaitUntilReady:output_type -> gogoxel.automation.v1.WaitUntilReadyResponse
+	35, // 56: gogoxel.automation.v1.AutomationControlService.ResetMetricsWindow:output_type -> gogoxel.automation.v1.ResetMetricsWindowResponse
+	36, // 57: gogoxel.automation.v1.AutomationControlService.Stop:output_type -> gogoxel.automation.v1.StopResponse
+	38, // 58: gogoxel.automation.v1.AutomationArtifactService.CaptureScreenshot:output_type -> gogoxel.automation.v1.CaptureScreenshotResponse
+	40, // 59: gogoxel.automation.v1.AutomationArtifactService.ExportTrace:output_type -> gogoxel.automation.v1.ExportTraceResponse
+	42, // [42:60] is the sub-list for method output_type
+	24, // [24:42] is the sub-list for method input_type
+	24, // [24:24] is the sub-list for extension type_name
+	24, // [24:24] is the sub-list for extension extendee
+	0,  // [0:24] is the sub-list for field type_name
 }
 
 func init() { file_gogoxel_automation_v1_automation_proto_init() }
@@ -2081,8 +2491,8 @@ func file_gogoxel_automation_v1_automation_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_gogoxel_automation_v1_automation_proto_rawDesc), len(file_gogoxel_automation_v1_automation_proto_rawDesc)),
-			NumEnums:      1,
-			NumMessages:   33,
+			NumEnums:      2,
+			NumMessages:   39,
 			NumExtensions: 0,
 			NumServices:   3,
 		},

@@ -11,6 +11,7 @@ import (
 	"Gogoxel/internal/control"
 	"Gogoxel/internal/game"
 	"Gogoxel/internal/platform"
+	"Gogoxel/internal/session"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -136,6 +137,56 @@ func TestHeadlessLiveGRPCRejectsManualStepAndContinuesRunning(t *testing.T) {
 
 	if stopErr := grpcClient.Stop(context.Background()); stopErr != nil {
 		t.Fatalf("Stop() error = %v", stopErr)
+	}
+	if err := <-hostDone; err != nil {
+		t.Fatalf("host.Run() error = %v", err)
+	}
+}
+
+func TestHeadlessGRPCCenteredCursorEditFlow(t *testing.T) {
+	grpcClient, hostDone := startServer(t, game.HostOptions{Headless: true, TickRateHz: 60, ArtifactDir: t.TempDir()})
+	defer grpcClient.Close()
+
+	callCtx := context.Background()
+	if err := grpcClient.LoadGenerator(callCtx, "Cube"); err != nil {
+		t.Fatalf("LoadGenerator() error = %v", err)
+	}
+	if err := grpcClient.SetCamera(callCtx, platform.Camera{
+		Position: [3]float32{0, 64, 64},
+		YawDeg:   0,
+		PitchDeg: 0,
+		FovDeg:   60,
+	}); err != nil {
+		t.Fatalf("SetCamera() error = %v", err)
+	}
+	if err := grpcClient.SetSelectedMaterial(callCtx, "grass"); err != nil {
+		t.Fatalf("SetSelectedMaterial() error = %v", err)
+	}
+
+	placeResult, err := grpcClient.EditAtCursor(callCtx, session.EditModePlace, session.CursorPosition{NormalizedX: 0.5, NormalizedY: 0.5})
+	if err != nil {
+		t.Fatalf("EditAtCursor(place) error = %v", err)
+	}
+	if !placeResult.Changed {
+		t.Fatal("EditAtCursor(place) changed = false, want true")
+	}
+	if got, want := placeResult.TargetVoxel, [3]uint32{31, 64, 64}; got != want {
+		t.Fatalf("EditAtCursor(place) target = %v, want %v", got, want)
+	}
+
+	removeResult, err := grpcClient.EditAtCursor(callCtx, session.EditModeRemove, session.CursorPosition{NormalizedX: 0.5, NormalizedY: 0.5})
+	if err != nil {
+		t.Fatalf("EditAtCursor(remove) error = %v", err)
+	}
+	if !removeResult.Changed {
+		t.Fatal("EditAtCursor(remove) changed = false, want true")
+	}
+	if got, want := removeResult.TargetVoxel, [3]uint32{31, 64, 64}; got != want {
+		t.Fatalf("EditAtCursor(remove) target = %v, want %v", got, want)
+	}
+
+	if err := grpcClient.Stop(callCtx); err != nil {
+		t.Fatalf("Stop() error = %v", err)
 	}
 	if err := <-hostDone; err != nil {
 		t.Fatalf("host.Run() error = %v", err)

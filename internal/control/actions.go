@@ -17,6 +17,10 @@ const (
 	ActionTurnLeft     input.Action = "turn_left"
 	ActionFaster       input.Action = "faster"
 	ActionNextModel    input.Action = "next_model"
+	ActionPlaceCube    input.Action = "place_cube"
+	ActionRemoveCube   input.Action = "remove_cube"
+	ActionNextMaterial input.Action = "next_material"
+	ActionPreviousMaterial input.Action = "previous_material"
 )
 
 func KnownActions() []input.Action {
@@ -35,5 +39,9 @@ func KnownActions() []input.Action {
 		ActionTurnLeft,
 		ActionFaster,
 		ActionNextModel,
+		ActionPlaceCube,
+		ActionRemoveCube,
+		ActionNextMaterial,
+		ActionPreviousMaterial,
 	}
 }

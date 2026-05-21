@@ -29,17 +29,20 @@ func newSessionState(options HostOptions) (*sessionState, error) {
 			return nil, err
 		}
 	}
-	return &sessionState{
-		options:     options,
-		game:        g,
-		frameWindow: &frameWindow{},
-		trace: newTraceRecorder(map[string]any{
+	state := &sessionState{
+		options: options,
+		game:    g,
+	}
+	if options.AutomationExposed {
+		state.frameWindow = &frameWindow{}
+		state.trace = newTraceRecorder(map[string]any{
 			"headless":      options.Headless,
 			"hidden_window": options.HiddenWindow,
 			"tick_rate_hz":  options.TickRateHz,
 			"go_version":    runtime.Version(),
-		}),
-	}, nil
+		})
+	}
+	return state, nil
 }
 
 func (s *sessionState) close() error {
@@ -63,28 +66,34 @@ func (s *sessionState) step(ctx context.Context, count int) (session.StepResult,
 		if err := s.game.StepFrame(s.game.TickDuration()); err != nil {
 			return session.StepResult{}, err
 		}
-		sample := time.Since(startedAt)
-		s.frameWindow.Record(sample)
-		s.trace.recordFrame(sample, s.metricsSnapshot())
+		if s.options.AutomationExposed {
+			sample := time.Since(startedAt)
+			s.frameWindow.Record(sample)
+			s.trace.recordFrame(sample, s.metricsSnapshot())
+		}
 	}
 	return session.StepResult{Ticks: count, Frames: count, Metrics: s.metricsSnapshot()}, nil
 }
 
-func (s *sessionState) advanceLiveFrame() error {
+// advanceLiveFrame steps the game by delta (the actual wall-clock time since
+// the last frame). For renderer sessions delta comes from the caller's
+// wall-clock measurement; for headless sessions it is the configured tick
+// duration.
+func (s *sessionState) advanceLiveFrame(delta time.Duration) error {
 	if !s.options.Headless {
 		s.game.PollEvents()
 		if s.game.IsIconified() {
 			return nil
 		}
 	}
-	startedAt := time.Now()
-	if err := s.game.StepFrame(s.game.TickDuration()); err != nil {
+	if err := s.game.StepFrame(delta); err != nil {
 		return err
 	}
-	s.game.RecordFrame(s.game.TickDuration())
-	sample := time.Since(startedAt)
-	s.frameWindow.Record(sample)
-	s.trace.recordFrame(sample, s.metricsSnapshot())
+	s.game.RecordFrame(delta)
+	if s.options.AutomationExposed {
+		s.frameWindow.Record(delta)
+		s.trace.recordFrame(delta, s.metricsSnapshot())
+	}
 	return nil
 }
 

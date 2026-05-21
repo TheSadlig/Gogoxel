@@ -40,11 +40,14 @@ type Core struct {
 	catalog       *GeneratorCatalog
 	camera        platform.Camera
 	svo           *world.SVO
+	cursor        CursorSample
 	generatorName string
 	sceneVersion  uint64
 	elapsed       time.Duration
 	tickRateHz    int
 	tickDuration  time.Duration
+	selectedEditMaterial int
+	placeStroke   continuousEditState
 }
 
 func NewCore(catalog *GeneratorCatalog, cfg Config) *Core {
@@ -61,6 +64,7 @@ func NewCore(catalog *GeneratorCatalog, cfg Config) *Core {
 		heldActions:  make(input.Snapshot),
 		catalog:      catalog,
 		camera:       defaultCamera(),
+		cursor:       CursorSample{NormalizedX: 0.5, NormalizedY: 0.5},
 		tickRateHz:   cfg.TickRateHz,
 		tickDuration: time.Second / time.Duration(cfg.TickRateHz),
 	}
@@ -230,6 +234,8 @@ func (c *Core) Step(delta time.Duration) error {
 	if err := c.handleGeneratorCycle(); err != nil {
 		return err
 	}
+	c.handleMaterialCycle()
+	c.handleCursorEdits()
 	c.advanceCamera(delta)
 	return nil
 }
@@ -258,6 +264,39 @@ func (c *Core) handleGeneratorCycle() error {
 		return nil
 	}
 	return c.LoadGenerator(next)
+}
+
+func (c *Core) handleMaterialCycle() {
+	if c == nil {
+		return
+	}
+	if c.input.Triggered(control.ActionNextMaterial) {
+		c.cycleSelectedEditMaterial(1)
+	}
+	if c.input.Triggered(control.ActionPreviousMaterial) {
+		c.cycleSelectedEditMaterial(-1)
+	}
+}
+
+func (c *Core) handleCursorEdits() {
+	if c == nil || c.svo == nil {
+		return
+	}
+	if c.input.Triggered(control.ActionPlaceCube) {
+		_, _ = c.EditAtCursor(EditModePlace, c.cursor)
+		c.placeStroke = continuousEditState{
+			active:  true,
+			last:    cursorEditSample{camera: c.camera, cursor: c.cursor},
+			surface: cloneSVO(c.svo),
+		}
+	} else if c.input.Down(control.ActionPlaceCube) {
+		c.continuePlaceStroke()
+	} else {
+		c.placeStroke = continuousEditState{}
+	}
+	if c.input.Triggered(control.ActionRemoveCube) {
+		_, _ = c.EditAtCursor(EditModeRemove, c.cursor)
+	}
 }
 
 func (c *Core) advanceCamera(delta time.Duration) {

@@ -9,6 +9,8 @@ import (
 const (
 	MoveCooldown       = 120 * time.Millisecond
 	ModelSwitchCooldown = 300 * time.Millisecond
+	EditCooldown       = 0
+	MaterialSwitchCooldown = 150 * time.Millisecond
 )
 
 type ActionPolicy struct {
@@ -31,5 +33,9 @@ func DefaultPolicies() map[input.Action]ActionPolicy {
 		ActionTurnLeft:     {Cooldown: MoveCooldown},
 		ActionFaster:       {Cooldown: MoveCooldown},
 		ActionNextModel:    {Cooldown: ModelSwitchCooldown},
+		ActionPlaceCube:    {Cooldown: EditCooldown},
+		ActionRemoveCube:   {Cooldown: EditCooldown},
+		ActionNextMaterial: {Cooldown: MaterialSwitchCooldown},
+		ActionPreviousMaterial: {Cooldown: MaterialSwitchCooldown},
 	}
 }

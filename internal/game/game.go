@@ -310,6 +310,37 @@ func (g *Game) SetCamera(camera platform.Camera) {
 	g.core.SetCamera(camera)
 }
 
+func (g *Game) SetSelectedEditMaterial(name string) error {
+	if g == nil {
+		return fmt.Errorf("game is not initialized")
+	}
+	return g.core.SetSelectedEditMaterial(name)
+}
+
+func (g *Game) SelectedEditMaterialName() string {
+	if g == nil {
+		return ""
+	}
+	return g.core.SelectedEditMaterialName()
+}
+
+func (g *Game) EditAtCursor(mode engine.EditMode, normalizedX, normalizedY float32) (engine.EditResult, error) {
+	if g == nil {
+		return engine.EditResult{}, fmt.Errorf("game is not initialized")
+	}
+	sample := engine.CursorSample{
+		NormalizedX: normalizedX,
+		NormalizedY: normalizedY,
+	}
+	if g.window != nil {
+		sample.ViewportWidth, sample.ViewportHeight = g.window.FramebufferSize()
+	} else {
+		sample.ViewportWidth = vulkan.DefaultWindowWidth
+		sample.ViewportHeight = vulkan.DefaultWindowHeight
+	}
+	return g.core.EditAtCursor(mode, sample)
+}
+
 func (g *Game) Snapshot() engine.Snapshot {
 	return g.core.Snapshot()
 }
@@ -371,7 +402,8 @@ func (g *Game) CaptureScreenshot(path string) error {
 }
 
 func (g *Game) Update(delta time.Duration) error {
-	g.core.SetHeldActions(mergeSnapshots(keyboardSnapshot(g.window), g.externalHeldActions))
+	g.core.SetCursorSample(cursorSample(g.window))
+	g.core.SetHeldActions(mergeSnapshots(keyboardSnapshot(g.window), mouseSnapshot(g.window), g.externalHeldActions))
 	if err := g.core.Step(delta); err != nil {
 		return err
 	}
@@ -388,6 +420,14 @@ func (g *Game) Update(delta time.Duration) error {
 			}
 			g.loadedSceneVersion = g.core.SceneVersion()
 			g.updateWindowTitle()
+			return nil
+		}
+		if g.renderer == nil {
+			g.loadedSceneVersion = g.core.SceneVersion()
+			return nil
+		}
+		if g.chunk != nil && g.chunk.QueueSceneUpdate(g.core.CurrentSVO()) {
+			g.loadedSceneVersion = g.core.SceneVersion()
 			return nil
 		}
 		if err := g.InitChunk(); err != nil {
@@ -420,6 +460,9 @@ func (g *Game) updateWindowTitle() {
 	title := windowTitle
 	if generatorName := g.currentGeneratorName(); generatorName != "" {
 		title = fmt.Sprintf("%s | %s", title, generatorName)
+	}
+	if materialName := g.core.SelectedEditMaterialName(); materialName != "" {
+		title = fmt.Sprintf("%s | %s", title, materialName)
 	}
 	if g.lastFPS > 0 {
 		title = fmt.Sprintf("%s | %.1f FPS", title, g.lastFPS)
@@ -456,6 +499,9 @@ func (g *Game) Render(frame *vulkan.Frame) error {
 	}
 	if g.chunk == nil {
 		return fmt.Errorf("chunk resources are not initialized")
+	}
+	if err := g.chunk.RecordSceneUpdate(frame); err != nil {
+		return fmt.Errorf("recording scene update: %w", err)
 	}
 	camera := g.core.Camera()
 	g.chunk.SetCameraPosition(camera.Position)
@@ -496,6 +542,8 @@ func defaultKeyBindings() map[input.Action]glfw.Key {
 		control.ActionMoveDown:     glfw.KeyE,
 		control.ActionFaster:       glfw.KeyLeftShift,
 		control.ActionNextModel:    glfw.KeyF1,
+		control.ActionPreviousMaterial: glfw.KeyLeftBracket,
+		control.ActionNextMaterial: glfw.KeyRightBracket,
 	}
 }
 
@@ -509,6 +557,48 @@ func keyboardSnapshot(source *platform.Window) input.Snapshot {
 		snapshot[action] = source.IsKeyDown(key)
 	}
 	return snapshot
+}
+
+func mouseSnapshot(source *platform.Window) input.Snapshot {
+	snapshot := make(input.Snapshot, 2)
+	if source == nil {
+		return snapshot
+	}
+	snapshot[control.ActionPlaceCube] = source.IsMouseButtonDown(glfw.MouseButtonLeft)
+	snapshot[control.ActionRemoveCube] = source.IsMouseButtonDown(glfw.MouseButtonRight)
+	return snapshot
+}
+
+func cursorSample(source *platform.Window) engine.CursorSample {
+	sample := engine.CursorSample{
+		NormalizedX:   0.5,
+		NormalizedY:   0.5,
+		ViewportWidth: vulkan.DefaultWindowWidth,
+		ViewportHeight: vulkan.DefaultWindowHeight,
+	}
+	if source == nil {
+		return sample
+	}
+	windowWidth, windowHeight := source.Size()
+	framebufferWidth, framebufferHeight := source.FramebufferSize()
+	cursorX, cursorY := source.CursorPosition()
+	if framebufferWidth <= 0 {
+		framebufferWidth = vulkan.DefaultWindowWidth
+	}
+	if framebufferHeight <= 0 {
+		framebufferHeight = vulkan.DefaultWindowHeight
+	}
+	return cursorSampleFromMetrics(windowWidth, windowHeight, framebufferWidth, framebufferHeight, cursorX, cursorY)
+}
+
+func clampNormalized(value float32) float32 {
+	if value < 0 {
+		return 0
+	}
+	if value > 1 {
+		return 1
+	}
+	return value
 }
 
 func mergeSnapshots(values ...input.Snapshot) input.Snapshot {

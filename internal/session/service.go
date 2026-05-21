@@ -52,6 +52,25 @@ type ArtifactInfo struct {
 	Format        string
 }
 
+type EditMode string
+
+const (
+	EditModePlace  EditMode = "place"
+	EditModeRemove EditMode = "remove"
+)
+
+type CursorPosition struct {
+	NormalizedX float32
+	NormalizedY float32
+}
+
+type CursorEditResult struct {
+	Changed      bool
+	HitVoxel     [3]uint32
+	TargetVoxel  [3]uint32
+	MaterialName string
+}
+
 type StepResult struct {
 	Ticks   int
 	Frames  int
@@ -67,6 +86,8 @@ type AutomationSession interface {
 	GetCamera(context.Context) (platform.Camera, error)
 	PressAction(context.Context, input.Action) error
 	ReleaseAction(context.Context, input.Action) error
+	SetSelectedMaterial(context.Context, string) error
+	EditAtCursor(context.Context, EditMode, CursorPosition) (CursorEditResult, error)
 	ClickUI(context.Context, string) error
 	StepTicks(context.Context, int) (StepResult, error)
 	StepFrames(context.Context, int) (StepResult, error)

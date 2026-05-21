@@ -20,3 +20,17 @@ func TestAlignDeviceSizeHandlesNonPowerOfTwoAlignment(t *testing.T) {
 		t.Fatalf("alignDeviceSize(7, 6) = %d, want %d", got, want)
 	}
 }
+
+func TestStagingRingCanAllocateReturnsFalseWhenRemainingSpaceIsTooSmall(t *testing.T) {
+	ring := &stagingRing{size: stagingRingBytesPerSlot, offset: stagingRingBytesPerSlot - 492}
+	if stagingRingCanAllocate(ring, 512, 4) {
+		t.Fatal("stagingRingCanAllocate() = true, want false when the ring only has 492 bytes left")
+	}
+}
+
+func TestStagingRingCanAllocateReturnsTrueWhenAllocationFits(t *testing.T) {
+	ring := &stagingRing{size: stagingRingBytesPerSlot, offset: 64 * 1024}
+	if !stagingRingCanAllocate(ring, 512, 4) {
+		t.Fatal("stagingRingCanAllocate() = false, want true for a fitting brick upload")
+	}
+}

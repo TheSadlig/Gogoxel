@@ -63,10 +63,27 @@ message Artifact {
   string format = 4;
 }
 
+message NormalizedCursor {
+  float normalized_x = 1;
+  float normalized_y = 2;
+}
+
+message VoxelCoordinates {
+  uint32 x = 1;
+  uint32 y = 2;
+  uint32 z = 3;
+}
+
 enum ActionState {
   ACTION_STATE_UNSPECIFIED = 0;
   ACTION_STATE_PRESS = 1;
   ACTION_STATE_RELEASE = 2;
+}
+
+enum EditMode {
+  EDIT_MODE_UNSPECIFIED = 0;
+  EDIT_MODE_PLACE = 1;
+  EDIT_MODE_REMOVE = 2;
 }
 
 message HealthResponse {
@@ -116,6 +133,26 @@ message InjectActionRequest {
 
 message InjectActionResponse {
   Readiness readiness = 1;
+}
+
+message SetSelectedMaterialRequest {
+  string material_name = 1;
+}
+
+message SetSelectedMaterialResponse {
+  string material_name = 1;
+}
+
+message EditAtCursorRequest {
+  NormalizedCursor cursor = 1;
+  EditMode mode = 2;
+}
+
+message EditAtCursorResponse {
+  bool changed = 1;
+  VoxelCoordinates hit_voxel = 2;
+  VoxelCoordinates target_voxel = 3;
+  string material_name = 4;
 }
 
 message ClickUiElementRequest {
@@ -190,6 +227,8 @@ service AutomationControlService {
   rpc SetCamera(SetCameraRequest) returns (SetCameraResponse);
   rpc SetSimulationTickRate(SetSimulationTickRateRequest) returns (SetSimulationTickRateResponse);
   rpc InjectAction(InjectActionRequest) returns (InjectActionResponse);
+  rpc SetSelectedMaterial(SetSelectedMaterialRequest) returns (SetSelectedMaterialResponse);
+  rpc EditAtCursor(EditAtCursorRequest) returns (EditAtCursorResponse);
   rpc ClickUiElement(ClickUiElementRequest) returns (ClickUiElementResponse);
   rpc StepTicks(StepTicksRequest) returns (StepTicksResponse);
   rpc StepFrames(StepFramesRequest) returns (StepFramesResponse);
