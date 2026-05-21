@@ -48,6 +48,11 @@ type cursorEditSample struct {
 	cursor CursorSample
 }
 
+type resolvedCursorEditTarget struct {
+	hit      world.RaycastHit
+	position [3]uint32
+}
+
 type continuousEditState struct {
 	active bool
 	last   cursorEditSample
@@ -130,37 +135,16 @@ func (c *Core) applyCursorEditSamples(mode EditMode, samples []cursorEditSample,
 	}
 
 	for _, sample := range samples {
-		ray, err := cursorRay(sample.camera, sample.cursor)
+		target, err := c.resolveCursorEditTarget(mode, sample, raycastSVO)
 		if err != nil {
 			if strict {
 				return EditResult{}, err
 			}
 			continue
 		}
-		hit, ok := raycastSVO.Raycast(ray, float32(raycastSVO.Size())*2)
-		if !ok {
-			if strict {
-				return EditResult{}, fmt.Errorf("cursor ray did not hit the scene")
-			}
-			continue
-		}
 
-		result.Hit = hit
-		switch mode {
-		case EditModePlace:
-			target, ok := offsetVoxel(hit.Voxel, hit.Normal, c.svo.Size())
-			if !ok {
-				if strict {
-					return EditResult{}, fmt.Errorf("cursor placement target is outside the scene")
-				}
-				continue
-			}
-			result.TargetVoxel = target
-		case EditModeRemove:
-			result.TargetVoxel = hit.Voxel
-		default:
-			return EditResult{}, fmt.Errorf("unsupported edit mode %d", mode)
-		}
+		result.Hit = target.hit
+		result.TargetVoxel = target.position
 
 		if _, ok := seen[result.TargetVoxel]; ok {
 			continue
@@ -174,6 +158,42 @@ func (c *Core) applyCursorEditSamples(mode EditMode, samples []cursorEditSample,
 		c.sceneVersion++
 	}
 	return result, nil
+}
+
+func (c *Core) resolveCursorEditTarget(mode EditMode, sample cursorEditSample, raycastSVO *world.SVO) (resolvedCursorEditTarget, error) {
+	if c == nil {
+		return resolvedCursorEditTarget{}, fmt.Errorf("engine core is not initialized")
+	}
+	if c.svo == nil {
+		return resolvedCursorEditTarget{}, fmt.Errorf("no scene is loaded")
+	}
+	if raycastSVO == nil {
+		raycastSVO = c.svo
+	}
+
+	ray, err := cursorRay(sample.camera, sample.cursor)
+	if err != nil {
+		return resolvedCursorEditTarget{}, err
+	}
+	hit, ok := raycastSVO.Raycast(ray, float32(raycastSVO.Size())*2)
+	if !ok {
+		return resolvedCursorEditTarget{}, fmt.Errorf("cursor ray did not hit the scene")
+	}
+
+	target := hit.Voxel
+	switch mode {
+	case EditModePlace:
+		target, ok = offsetVoxel(hit.Voxel, hit.Normal, c.svo.Size())
+		if !ok {
+			return resolvedCursorEditTarget{}, fmt.Errorf("cursor placement target is outside the scene")
+		}
+	case EditModeRemove:
+		// Removing edits the hit voxel directly.
+	default:
+		return resolvedCursorEditTarget{}, fmt.Errorf("unsupported edit mode %d", mode)
+	}
+
+	return resolvedCursorEditTarget{hit: hit, position: target}, nil
 }
 
 func (c *Core) continuePlaceStroke() {

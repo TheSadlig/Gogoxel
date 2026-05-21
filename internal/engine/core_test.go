@@ -2,6 +2,7 @@ package engine
 
 import (
 	"math"
+	"slices"
 	"testing"
 
 	"Gogoxel/internal/control"
@@ -306,6 +307,44 @@ func TestEditAtCursorHitsProjectedTopFacePoint(t *testing.T) {
 		Direction: [3]float32{0, 0, -1},
 	}, 256); !ok {
 		t.Fatal("Raycast() ok = false after projected top-face placement")
+	}
+}
+
+func TestResolveCursorEditTargetProjectsWithoutMutatingScene(t *testing.T) {
+	core := NewCore(NewGeneratorCatalog([]generators.Generator{
+		generators.NewCubeGenerator("Cube", 128, 64, 0xE2554F),
+	}), Config{TickRateHz: 60})
+	if err := core.LoadGenerator("Cube"); err != nil {
+		t.Fatalf("LoadGenerator() error = %v", err)
+	}
+
+	camera := lookAtCamera([3]float32{0, 64, 128}, [3]float32{64, 64, 64}, 60)
+	core.SetCamera(camera)
+	projectedPoint := [3]float32{80.5, 52.5, 96.0}
+	cursor := projectWorldPointToCursor(t, camera, projectedPoint, 1920, 1080)
+
+	beforeVersion := core.SceneVersion()
+	beforeWords := core.CurrentSVO().StorageBufferWords()
+
+	target, err := core.resolveCursorEditTarget(EditModePlace, cursorEditSample{camera: camera, cursor: cursor}, core.CurrentSVO())
+	if err != nil {
+		t.Fatalf("resolveCursorEditTarget() error = %v", err)
+	}
+	if got, want := target.hit.Voxel, [3]uint32{80, 52, 95}; got != want {
+		t.Fatalf("resolveCursorEditTarget() hit voxel = %v, want %v", got, want)
+	}
+	if got, want := target.hit.Normal, [3]int32{0, 0, 1}; got != want {
+		t.Fatalf("resolveCursorEditTarget() hit normal = %v, want %v", got, want)
+	}
+	if got, want := target.position, [3]uint32{80, 52, 96}; got != want {
+		t.Fatalf("resolveCursorEditTarget() target voxel = %v, want %v", got, want)
+	}
+	if got, want := core.SceneVersion(), beforeVersion; got != want {
+		t.Fatalf("SceneVersion() after resolve = %d, want %d", got, want)
+	}
+	afterWords := core.CurrentSVO().StorageBufferWords()
+	if !slices.Equal(afterWords, beforeWords) {
+		t.Fatal("StorageBufferWords() changed during target resolution")
 	}
 }
 
