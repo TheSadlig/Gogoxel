@@ -12,10 +12,10 @@ import (
 )
 
 const (
-	defaultTickRateHz      = 60
-	moveUnitsPerSecond     = float32(6)
-	turnDegreesPerSecond   = float32(120)
-	maxPitchDegrees        = float32(89)
+	defaultTickRateHz    = 60
+	moveUnitsPerSecond   = float32(6)
+	turnDegreesPerSecond = float32(120)
+	maxPitchDegrees      = float32(89)
 )
 
 type Config struct {
@@ -34,20 +34,20 @@ type Snapshot struct {
 }
 
 type Core struct {
-	clock         Clock
-	input         *input.Manager
-	heldActions   input.Snapshot
-	catalog       *GeneratorCatalog
-	camera        platform.Camera
-	svo           *world.SVO
-	cursor        CursorSample
-	generatorName string
-	sceneVersion  uint64
-	elapsed       time.Duration
-	tickRateHz    int
-	tickDuration  time.Duration
+	clock                Clock
+	input                *input.Manager
+	heldActions          input.Snapshot
+	catalog              *GeneratorCatalog
+	camera               platform.Camera
+	svo                  *world.SVO
+	cursor               CursorSample
+	generatorName        string
+	sceneVersion         uint64
+	elapsed              time.Duration
+	tickRateHz           int
+	tickDuration         time.Duration
 	selectedEditMaterial int
-	placeStroke   continuousEditState
+	placeStroke          continuousEditState
 }
 
 func NewCore(catalog *GeneratorCatalog, cfg Config) *Core {
@@ -283,11 +283,12 @@ func (c *Core) handleCursorEdits() {
 		return
 	}
 	if c.input.Triggered(control.ActionPlaceCube) {
-		_, _ = c.EditAtCursor(EditModePlace, c.cursor)
+		strokeSurface := cloneSVO(c.svo)
+		_, _ = c.applyCursorEditSamples(EditModePlace, []cursorEditSample{{camera: c.camera, cursor: c.cursor}}, strokeSurface, true)
 		c.placeStroke = continuousEditState{
 			active:  true,
 			last:    cursorEditSample{camera: c.camera, cursor: c.cursor},
-			surface: cloneSVO(c.svo),
+			surface: strokeSurface,
 		}
 	} else if c.input.Down(control.ActionPlaceCube) {
 		c.continuePlaceStroke()

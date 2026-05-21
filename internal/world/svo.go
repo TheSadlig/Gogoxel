@@ -895,6 +895,10 @@ func (s *SVO) StorageBufferWords() []uint32 {
 	return clone
 }
 
+// StorageBufferWordsRef returns the cached storage-buffer payload backing the
+// current SVO snapshot. Callers must treat the returned slice as read-only and
+// must not retain it across rebuilds, reloads, or voxel edits that can refresh
+// the underlying storage words.
 func (s *SVO) StorageBufferWordsRef() []uint32 {
 	if s == nil || len(s.nodes) == 0 {
 		return nil

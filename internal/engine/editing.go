@@ -10,9 +10,9 @@ import (
 )
 
 type CursorSample struct {
-	NormalizedX   float32
-	NormalizedY   float32
-	ViewportWidth int
+	NormalizedX    float32
+	NormalizedY    float32
+	ViewportWidth  int
 	ViewportHeight int
 }
 
@@ -54,8 +54,8 @@ type resolvedCursorEditTarget struct {
 }
 
 type continuousEditState struct {
-	active bool
-	last   cursorEditSample
+	active  bool
+	last    cursorEditSample
 	surface *world.SVO
 }
 
@@ -338,7 +338,7 @@ func cursorRay(camera platform.Camera, cursor CursorSample) (world.Ray, error) {
 	normalizedX := clampFloat(cursor.NormalizedX, 0, 1)
 	normalizedY := clampFloat(cursor.NormalizedY, 0, 1)
 	screenX := normalizedX*2 - 1
-	screenY := normalizedY*2 - 1
+	screenY := 1 - normalizedY*2
 	aspect := float32(cursor.ViewportWidth) / float32(cursor.ViewportHeight)
 	fovScale := float32(math.Tan(float64(camera.FovDeg) * 0.5 * math.Pi / 180.0))
 	screenX *= aspect * fovScale

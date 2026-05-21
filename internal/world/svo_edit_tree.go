@@ -14,7 +14,7 @@ func classifyBrickVoxels(voxels *[BrickVoxelCount]uint8) brickVoxelShape {
 	uniformMaterialID := uint8(0)
 	hasMaterial := false
 	uniform := true
-	for _, materialID := range voxels {
+	for _, materialID := range voxels[:] {
 		if materialID == 0 {
 			uniform = false
 			continue
@@ -180,7 +180,7 @@ func (s *SVO) extendOccupiedBoundsFromNode(node *stagingNode, nodeSize, originX,
 		return
 	}
 	if node.brickVoxels != nil {
-		for index, materialID := range node.brickVoxels {
+		for index, materialID := range node.brickVoxels[:] {
 			if materialID == 0 {
 				continue
 			}
@@ -261,7 +261,7 @@ func (s *SVO) editVoxelNode(node *stagingNode, originX, originY, originZ, nodeSi
 		}
 		if nodeSize == BrickSize {
 			voxels := &[BrickVoxelCount]uint8{}
-			for index := range voxels {
+			for index := range voxels[:] {
 				voxels[index] = currentMaterialID
 			}
 			voxels[brickVoxelIndex(int(x-originX), int(y-originY), int(z-originZ))] = materialID
@@ -326,7 +326,7 @@ func (s *SVO) normalizeEditableNode(node *stagingNode, nodeSize uint) *stagingNo
 		uniformMaterialID := uint8(0)
 		hasMaterial := false
 		uniform := true
-		for _, materialID := range node.brickVoxels {
+		for _, materialID := range node.brickVoxels[:] {
 			if materialID == 0 {
 				uniform = false
 				continue
