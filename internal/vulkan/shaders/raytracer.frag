@@ -52,11 +52,11 @@ uint resolveFaceAxis(uint axisMask, vec3 rd) {
         best = abs(rd.x);
         axis = AXIS_X;
     }
-    if ((axisMask & AXIS_Y) != 0u && abs(rd.y) > best) {
+    if ((axisMask & AXIS_Y) != 0u && abs(rd.y) >= best) {
         best = abs(rd.y);
         axis = AXIS_Y;
     }
-    if ((axisMask & AXIS_Z) != 0u && abs(rd.z) > best) {
+    if ((axisMask & AXIS_Z) != 0u && abs(rd.z) >= best) {
         axis = AXIS_Z;
     }
 
@@ -130,6 +130,24 @@ uvec3 brickSlotCoord(uint slot) {
     );
 }
 
+uint brickBoundaryFaceMask(vec3 localPos, vec3 rd) {
+    uint mask = 0u;
+    float minEdge = BoundaryEpsilon * 2.0;
+    float maxEdge = float(BrickSize) - minEdge;
+
+    if ((localPos.x <= minEdge && rd.x > 0.0) || (localPos.x >= maxEdge && rd.x < 0.0)) {
+        mask |= AXIS_X;
+    }
+    if ((localPos.y <= minEdge && rd.y > 0.0) || (localPos.y >= maxEdge && rd.y < 0.0)) {
+        mask |= AXIS_Y;
+    }
+    if ((localPos.z <= minEdge && rd.z > 0.0) || (localPos.z >= maxEdge && rd.z < 0.0)) {
+        mask |= AXIS_Z;
+    }
+
+    return mask;
+}
+
 bool raymarchBrick(
     uint slot,
     uvec3 brickOriginWorld,
@@ -146,6 +164,7 @@ bool raymarchBrick(
 
     ivec3 brickOriginPool = ivec3(brickSlotCoord(slot) * BrickSize);
     vec3 localPos = currPosWorld - vec3(brickOriginWorld);
+    uint boundaryFaceMask = brickBoundaryFaceMask(localPos, rd);
     localPos = clamp(localPos, vec3(0.0), vec3(float(BrickSize) - 1e-4));
 
     ivec3 voxel = ivec3(floor(localPos));
@@ -175,8 +194,8 @@ bool raymarchBrick(
         tDelta.z = 1.0 / 0.0;
     }
 
-    uint faceMask = entryFaceMask;
-    bool hasFaceMask = hasEntryFaceMask;
+    uint faceMask = boundaryFaceMask != 0u ? boundaryFaceMask : entryFaceMask;
+    bool hasFaceMask = boundaryFaceMask != 0u || hasEntryFaceMask;
 
     for (int stepIdx = 0; stepIdx < MaxBrickSteps; stepIdx++) {
         if (any(lessThan(voxel, ivec3(0))) || any(greaterThanEqual(voxel, ivec3(int(BrickSize))))) {

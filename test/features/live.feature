@@ -9,3 +9,11 @@ Feature: Live automation over a running session
     When I export the trace artifact "live-movement-trace"
     Then the trace artifact should exist
     And the trace artifact should contain "press_action"
+
+  Scenario: Live metrics reflect the actual frame cadence
+    Given a live automation session is started in headless mode
+    And the simulation tick rate is 10 Hz
+    And the generator "Cube" is loaded
+    When I reset the metrics window
+    Then the metrics window should eventually contain at least 12 samples within 3.0 seconds
+    And the average FPS should be below 15

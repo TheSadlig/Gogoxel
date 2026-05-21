@@ -87,6 +87,30 @@ func (c *GRPCClient) ReleaseAction(ctx context.Context, action string) error {
 	return err
 }
 
+func (c *GRPCClient) SetSelectedMaterial(ctx context.Context, name string) error {
+	_, err := c.control.SetSelectedMaterial(ctx, &automationpb.SetSelectedMaterialRequest{MaterialName: name})
+	return err
+}
+
+func (c *GRPCClient) EditAtCursor(ctx context.Context, mode session.EditMode, cursor session.CursorPosition) (session.CursorEditResult, error) {
+	response, err := c.control.EditAtCursor(ctx, &automationpb.EditAtCursorRequest{
+		Cursor: &automationpb.NormalizedCursor{
+			NormalizedX: cursor.NormalizedX,
+			NormalizedY: cursor.NormalizedY,
+		},
+		Mode: editModeToProto(mode),
+	})
+	if err != nil {
+		return session.CursorEditResult{}, err
+	}
+	return session.CursorEditResult{
+		Changed:      response.GetChanged(),
+		HitVoxel:     voxelFromProto(response.GetHitVoxel()),
+		TargetVoxel:  voxelFromProto(response.GetTargetVoxel()),
+		MaterialName: response.GetMaterialName(),
+	}, nil
+}
+
 func (c *GRPCClient) ClickUI(ctx context.Context, logicalID string) error {
 	_, err := c.control.ClickUiElement(ctx, &automationpb.ClickUiElementRequest{LogicalId: logicalID})
 	return err
@@ -238,4 +262,22 @@ func artifactFromProto(artifact *automationpb.Artifact) session.ArtifactInfo {
 		Path:          artifact.GetPath(),
 		Format:        artifact.GetFormat(),
 	}
+}
+
+func editModeToProto(mode session.EditMode) automationpb.EditMode {
+	switch mode {
+	case session.EditModePlace:
+		return automationpb.EditMode_EDIT_MODE_PLACE
+	case session.EditModeRemove:
+		return automationpb.EditMode_EDIT_MODE_REMOVE
+	default:
+		return automationpb.EditMode_EDIT_MODE_UNSPECIFIED
+	}
+}
+
+func voxelFromProto(voxel *automationpb.VoxelCoordinates) [3]uint32 {
+	if voxel == nil {
+		return [3]uint32{}
+	}
+	return [3]uint32{voxel.GetX(), voxel.GetY(), voxel.GetZ()}
 }

@@ -132,6 +132,44 @@ func (s *Server) InjectAction(ctx context.Context, request *automationpb.InjectA
 	return &automationpb.InjectActionResponse{Readiness: readinessToProto(readiness)}, nil
 }
 
+func (s *Server) SetSelectedMaterial(ctx context.Context, request *automationpb.SetSelectedMaterialRequest) (*automationpb.SetSelectedMaterialResponse, error) {
+	name := strings.TrimSpace(request.GetMaterialName())
+	if name == "" {
+		return nil, invalidArgument("material_name_required", "material name is required")
+	}
+	if err := s.service.SetSelectedMaterial(ctx, name); err != nil {
+		return nil, statusError(err, map[string]string{"material_name": name})
+	}
+	return &automationpb.SetSelectedMaterialResponse{MaterialName: name}, nil
+}
+
+func (s *Server) EditAtCursor(ctx context.Context, request *automationpb.EditAtCursorRequest) (*automationpb.EditAtCursorResponse, error) {
+	if request == nil || request.GetCursor() == nil {
+		return nil, invalidArgument("cursor_required", "cursor payload is required")
+	}
+	cursor := request.GetCursor()
+	if cursor.GetNormalizedX() < 0 || cursor.GetNormalizedX() > 1 || cursor.GetNormalizedY() < 0 || cursor.GetNormalizedY() > 1 {
+		return nil, invalidArgument("cursor_out_of_range", "cursor coordinates must be between 0 and 1")
+	}
+	mode, err := editModeFromProto(request.GetMode())
+	if err != nil {
+		return nil, statusError(err, nil)
+	}
+	result, err := s.service.EditAtCursor(ctx, mode, session.CursorPosition{
+		NormalizedX: cursor.GetNormalizedX(),
+		NormalizedY: cursor.GetNormalizedY(),
+	})
+	if err != nil {
+		return nil, statusError(err, map[string]string{"mode": string(mode)})
+	}
+	return &automationpb.EditAtCursorResponse{
+		Changed:      result.Changed,
+		HitVoxel:     voxelToProto(result.HitVoxel),
+		TargetVoxel:  voxelToProto(result.TargetVoxel),
+		MaterialName: result.MaterialName,
+	}, nil
+}
+
 func (s *Server) ClickUiElement(ctx context.Context, request *automationpb.ClickUiElementRequest) (*automationpb.ClickUiElementResponse, error) {
 	if request == nil || strings.TrimSpace(request.GetLogicalId()) == "" {
 		return nil, invalidArgument("logical_id_required", "logical id is required")
@@ -287,6 +325,21 @@ func artifactToProto(artifact session.ArtifactInfo) *automationpb.Artifact {
 		RequestedName: artifact.RequestedName,
 		Path:          artifact.Path,
 		Format:        artifact.Format,
+	}
+}
+
+func voxelToProto(voxel [3]uint32) *automationpb.VoxelCoordinates {
+	return &automationpb.VoxelCoordinates{X: voxel[0], Y: voxel[1], Z: voxel[2]}
+}
+
+func editModeFromProto(mode automationpb.EditMode) (session.EditMode, error) {
+	switch mode {
+	case automationpb.EditMode_EDIT_MODE_PLACE:
+		return session.EditModePlace, nil
+	case automationpb.EditMode_EDIT_MODE_REMOVE:
+		return session.EditModeRemove, nil
+	default:
+		return "", invalidArgument("invalid_edit_mode", "edit mode must be place or remove")
 	}
 }
 

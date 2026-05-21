@@ -48,6 +48,21 @@ type brickEvictOp struct {
 	slot         uint32
 }
 
+type scenePointerPatch struct {
+	nodeIndex uint32
+	slot      uint32
+}
+
+type sceneResidentUpload struct {
+	logicalIndex int
+	slot         uint32
+}
+
+type sceneUpdatePlan struct {
+	pointerPatches []scenePointerPatch
+	uploads        []sceneResidentUpload
+}
+
 // streamPlan is the immutable result of planning. Recording consumes it and
 // only commits the state changes (residency-map mutation, pool frees) after
 // the plan has been successfully transformed into GPU commands.
@@ -69,8 +84,9 @@ type residencyDelta struct {
 type brickStreamer struct {
 	mu sync.Mutex
 
-	// sourceBricks keeps the underlying brick slice alive so the voxel
-	// pointers in `bricks` remain valid.
+	// sourceBricks owns a snapshot of brick metadata for the last committed
+	// scene state. The slice is copied on replacement so SVO slice-backing
+	// reuse cannot mutate the streamer's previous-scene view underfoot.
 	sourceBricks []world.Brick
 	bricks       []streamBrick
 
@@ -82,6 +98,7 @@ type brickStreamer struct {
 	desiredReady    bool
 	resident        map[int]residentBrick
 
+	residentCap   int
 	residentLimit int
 	uploadBudget  int
 	lruTick       uint64
@@ -119,18 +136,17 @@ func newBrickStreamerWithConfig(bricks []world.Brick, cfg brickStreamerConfig) *
 	if len(bricks) == 0 {
 		return nil
 	}
+	metadata := cloneBrickMetadata(bricks)
 
-	residentLimit := cfg.ResidentLimit
-	if residentLimit <= 0 {
+	residentCap := cfg.ResidentLimit
+	if residentCap <= 0 {
 		// Use the full brick-pool capacity (minus slot 0 reserved for air).
-		residentLimit = int(brickPoolCapacity) - 1
+		residentCap = int(brickPoolCapacity) - 1
 	}
-	if residentLimit > len(bricks) {
-		residentLimit = len(bricks)
+	if residentCap <= 0 {
+		residentCap = 1
 	}
-	if residentLimit <= 0 {
-		residentLimit = 1
-	}
+	residentLimit := clampResidentLimit(residentCap, len(bricks))
 
 	uploadBudget := cfg.UploadBudget
 	if uploadBudget <= 0 {
@@ -138,9 +154,10 @@ func newBrickStreamerWithConfig(bricks []world.Brick, cfg brickStreamerConfig) *
 	}
 
 	streamer := &brickStreamer{
-		sourceBricks:  bricks,
+		sourceBricks:  metadata,
 		bricks:        make([]streamBrick, len(bricks)),
 		resident:      make(map[int]residentBrick, residentLimit),
+		residentCap:   residentCap,
 		residentLimit: residentLimit,
 		uploadBudget:  uploadBudget,
 		stopCh:        make(chan struct{}),
@@ -149,8 +166,8 @@ func newBrickStreamerWithConfig(bricks []world.Brick, cfg brickStreamerConfig) *
 		// and signals coalesce until the planner consumes one.
 		dirty: make(chan struct{}, 1),
 	}
-	for index := range bricks {
-		brick := &bricks[index]
+	for index := range metadata {
+		brick := &metadata[index]
 		streamer.bricks[index] = streamBrick{
 			nodeIndex: brick.NodeIndex,
 			origin:    brick.Origin,
@@ -159,12 +176,31 @@ func newBrickStreamerWithConfig(bricks []world.Brick, cfg brickStreamerConfig) *
 				float32(brick.Origin[1]) + float32(brickSizeVoxels)*0.5,
 				float32(brick.Origin[2]) + float32(brickSizeVoxels)*0.5,
 			},
-			voxels: &brick.Voxels,
+			voxels: brick.Voxels,
 		}
 	}
 
 	go streamer.run()
 	return streamer
+}
+
+func cloneBrickMetadata(bricks []world.Brick) []world.Brick {
+	if len(bricks) == 0 {
+		return nil
+	}
+	metadata := make([]world.Brick, len(bricks))
+	copy(metadata, bricks)
+	return metadata
+}
+
+func clampResidentLimit(residentCap int, brickCount int) int {
+	if residentCap <= 0 || brickCount <= 0 {
+		return 0
+	}
+	if residentCap > brickCount {
+		return brickCount
+	}
+	return residentCap
 }
 
 func (s *brickStreamer) run() {
@@ -219,6 +255,21 @@ func (s *brickStreamer) SetCameraPosition(position [3]float32) {
 	if firstSet || movedFarEnough {
 		s.markDirty()
 	}
+}
+
+func (s *brickStreamer) primeCameraPosition(position [3]float32) {
+	if s == nil {
+		return
+	}
+	desired := s.computeDesired(position)
+	s.mu.Lock()
+	s.cameraPosition = position
+	s.cameraEverSet = true
+	s.desired = desired
+	s.desiredReady = true
+	s.lastPlannedPos = position
+	s.lastPlannedOnce = true
+	s.mu.Unlock()
 }
 
 func (s *brickStreamer) ResidentCount() int {
@@ -528,8 +579,109 @@ func (s *brickStreamer) pickVictim(desiredSet map[int]struct{}) int {
 	return victim
 }
 
+func (s *brickStreamer) replaceSceneBricks(pool *brickPool, bricks []world.Brick) sceneUpdatePlan {
+	if s == nil {
+		return sceneUpdatePlan{}
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	type residentOrigin struct {
+		logicalIndex int
+		resident     residentBrick
+		voxels       *[world.BrickVoxelCount]uint8
+	}
+
+	residentByOrigin := make(map[[3]uint32]residentOrigin, len(s.resident))
+	for logicalIndex, resident := range s.resident {
+		if logicalIndex < 0 || logicalIndex >= len(s.sourceBricks) {
+			continue
+		}
+		brick := s.sourceBricks[logicalIndex]
+		residentByOrigin[brick.Origin] = residentOrigin{
+			logicalIndex: logicalIndex,
+			resident:     resident,
+			voxels:       brick.Voxels,
+		}
+	}
+
+	metadata := cloneBrickMetadata(bricks)
+	s.sourceBricks = metadata
+	s.bricks = make([]streamBrick, len(metadata))
+	s.residentLimit = clampResidentLimit(s.residentCap, len(bricks))
+	for index := range metadata {
+		brick := &metadata[index]
+		s.bricks[index] = streamBrick{
+			nodeIndex: brick.NodeIndex,
+			origin:    brick.Origin,
+			center: [3]float32{
+				float32(brick.Origin[0]) + float32(brickSizeVoxels)*0.5,
+				float32(brick.Origin[1]) + float32(brickSizeVoxels)*0.5,
+				float32(brick.Origin[2]) + float32(brickSizeVoxels)*0.5,
+			},
+			voxels: brick.Voxels,
+		}
+	}
+
+	plan := sceneUpdatePlan{
+		pointerPatches: make([]scenePointerPatch, 0, len(residentByOrigin)),
+		uploads:        make([]sceneResidentUpload, 0, len(residentByOrigin)),
+	}
+	newResident := make(map[int]residentBrick, min(len(s.resident), len(bricks)))
+	for logicalIndex, brick := range bricks {
+		existing, ok := residentByOrigin[brick.Origin]
+		if !ok {
+			continue
+		}
+		newResident[logicalIndex] = existing.resident
+		plan.pointerPatches = append(plan.pointerPatches, scenePointerPatch{nodeIndex: brick.NodeIndex, slot: existing.resident.slot})
+		if existing.voxels != brick.Voxels {
+			plan.uploads = append(plan.uploads, sceneResidentUpload{logicalIndex: logicalIndex, slot: existing.resident.slot})
+		}
+		delete(residentByOrigin, brick.Origin)
+	}
+	for _, removed := range residentByOrigin {
+		if pool != nil {
+			pool.Free(removed.resident.slot)
+		}
+	}
+	s.resident = newResident
+
+	if len(s.bricks) == 0 {
+		s.desired = nil
+		s.desiredReady = true
+		return plan
+	}
+	if s.cameraEverSet {
+		s.desired = s.computeDesired(s.cameraPosition)
+		s.desiredReady = true
+		s.lastPlannedPos = s.cameraPosition
+		s.lastPlannedOnce = true
+		return plan
+	}
+	s.desired = nil
+	s.desiredReady = false
+	s.lastPlannedOnce = false
+	return plan
+}
+
 func (chunk *ChunkResources) SetCameraPosition(position [3]float32) {
-	if chunk == nil || chunk.streamer == nil {
+	if chunk == nil {
+		return
+	}
+	firstSet := !chunk.cameraEverSet
+	chunk.cameraPosition = position
+	chunk.cameraEverSet = true
+	if chunk.streamer == nil {
+		return
+	}
+	// On the very first camera position, prime the streamer synchronously so
+	// that RecordStreaming in the same frame (e.g. immediately after InitChunk)
+	// finds desiredReady=true and can upload bricks without waiting for the
+	// background planner goroutine to wake up.
+	if firstSet {
+		chunk.streamer.primeCameraPosition(position)
 		return
 	}
 	chunk.streamer.SetCameraPosition(position)
@@ -641,9 +793,12 @@ func (chunk *ChunkResources) recordBrickUpload(frame *Frame, logicalIndex int, s
 	}
 
 	const brickBytes = vk.DeviceSize(world.BrickVoxelCount)
-	stagingBuffer, stagingOffset, dst, err := frame.renderer.stagingAlloc(frame.FrameSlot, brickBytes, 4)
+	stagingBuffer, stagingOffset, dst, release, err := frame.renderer.stagingAllocForUpload(frame.FrameSlot, brickBytes, 4)
 	if err != nil {
 		return fmt.Errorf("staging-alloc for brick upload: %w", err)
+	}
+	if release != nil {
+		frame.renderer.deferFrameRelease(frame.FrameSlot, release)
 	}
 	src := chunk.streamer.bricks[logicalIndex].voxels[:]
 	copy(unsafe.Slice((*byte)(dst), len(src)), src)
@@ -675,6 +830,36 @@ func (chunk *ChunkResources) recordBrickUpload(frame *Frame, logicalIndex int, s
 
 func nodeChildPointerByteOffset(nodeIndex uint32) vk.DeviceSize {
 	return vk.DeviceSize((svoHeaderWordCount + int(nodeIndex)*2 + 1) * 4)
+}
+
+// recordBufferTransferBarrier inserts a TRANSFER→TRANSFER pipeline barrier on
+// buffer. Use this when a vkCmdCopyBuffer and subsequent vkCmdFillBuffer (or
+// any two transfer writes) target overlapping regions of the same buffer:
+// without it the GPU may reorder the writes, leaving the earlier write's data
+// overwritten or invisible to the later write.
+func (r *Renderer) recordBufferTransferBarrier(commandBuffer vk.CommandBuffer, buffer vk.Buffer, size vk.DeviceSize) {
+	barriers := []vk.BufferMemoryBarrier{{
+		SType:               vk.StructureTypeBufferMemoryBarrier,
+		SrcAccessMask:       vk.AccessFlags(vk.AccessTransferWriteBit),
+		DstAccessMask:       vk.AccessFlags(vk.AccessTransferWriteBit),
+		SrcQueueFamilyIndex: vk.QueueFamilyIgnored,
+		DstQueueFamilyIndex: vk.QueueFamilyIgnored,
+		Buffer:              buffer,
+		Offset:              0,
+		Size:                size,
+	}}
+	vk.CmdPipelineBarrier(
+		commandBuffer,
+		vk.PipelineStageFlags(vk.PipelineStageTransferBit),
+		vk.PipelineStageFlags(vk.PipelineStageTransferBit),
+		0,
+		0,
+		nil,
+		uint32(len(barriers)),
+		barriers,
+		0,
+		nil,
+	)
 }
 
 func (r *Renderer) recordBufferShaderBarrier(commandBuffer vk.CommandBuffer, buffer vk.Buffer, size vk.DeviceSize) {

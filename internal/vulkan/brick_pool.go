@@ -272,6 +272,20 @@ func (pool *brickPool) Free(slot uint32) {
 	pool.freeList = append(pool.freeList, slot)
 }
 
+func (pool *brickPool) Reset() {
+	if pool == nil || pool.capacity == 0 {
+		return
+	}
+	for index := range pool.allocated {
+		pool.allocated[index] = false
+	}
+	pool.allocated[0] = true
+	pool.freeList = pool.freeList[:0]
+	for slot := pool.capacity; slot > 1; slot-- {
+		pool.freeList = append(pool.freeList, slot-1)
+	}
+}
+
 func (pool *brickPool) slotCoord(slot uint32) (uint32, uint32, uint32, error) {
 	if pool == nil {
 		return 0, 0, 0, fmt.Errorf("brick pool is nil")

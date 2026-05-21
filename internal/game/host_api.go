@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"Gogoxel/internal/engine"
 	"Gogoxel/internal/input"
 	"Gogoxel/internal/platform"
 	"Gogoxel/internal/session"
@@ -91,6 +92,42 @@ func (h *Host) ReleaseAction(ctx context.Context, action input.Action) error {
 		return nil, nil
 	})
 	return err
+}
+
+func (h *Host) SetSelectedMaterial(ctx context.Context, name string) error {
+	_, err := h.invoke(ctx, func(_ context.Context, state *sessionState) (any, error) {
+		state.trace.recordCommand("set_selected_material", map[string]any{"material_name": name})
+		return nil, state.game.SetSelectedEditMaterial(name)
+	})
+	return err
+}
+
+func (h *Host) EditAtCursor(ctx context.Context, mode session.EditMode, cursor session.CursorPosition) (session.CursorEditResult, error) {
+	value, err := h.invoke(ctx, func(_ context.Context, state *sessionState) (any, error) {
+		state.trace.recordCommand("edit_at_cursor", map[string]any{
+			"mode":         mode,
+			"normalized_x": cursor.NormalizedX,
+			"normalized_y": cursor.NormalizedY,
+		})
+		editMode, err := editModeToEngine(mode)
+		if err != nil {
+			return session.CursorEditResult{}, err
+		}
+		result, err := state.game.EditAtCursor(editMode, cursor.NormalizedX, cursor.NormalizedY)
+		if err != nil {
+			return session.CursorEditResult{}, err
+		}
+		return session.CursorEditResult{
+			Changed:      result.Changed,
+			HitVoxel:     result.Hit.Voxel,
+			TargetVoxel:  result.TargetVoxel,
+			MaterialName: result.MaterialName,
+		}, nil
+	})
+	if err != nil {
+		return session.CursorEditResult{}, err
+	}
+	return value.(session.CursorEditResult), nil
 }
 
 func (h *Host) ClickUI(ctx context.Context, logicalID string) error {
@@ -198,6 +235,17 @@ func (h *Host) waitUntilReadyLive(ctx context.Context, criteria session.WaitCrit
 			return session.Readiness{}, deadlineCtx.Err()
 		case <-ticker.C:
 		}
+	}
+}
+
+func editModeToEngine(mode session.EditMode) (engine.EditMode, error) {
+	switch mode {
+	case session.EditModePlace:
+		return engine.EditModePlace, nil
+	case session.EditModeRemove:
+		return engine.EditModeRemove, nil
+	default:
+		return engine.EditModeUnknown, fmt.Errorf("unsupported edit mode %q", mode)
 	}
 }
 

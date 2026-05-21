@@ -202,6 +202,8 @@ const (
 	AutomationControlService_SetCamera_FullMethodName             = "/gogoxel.automation.v1.AutomationControlService/SetCamera"
 	AutomationControlService_SetSimulationTickRate_FullMethodName = "/gogoxel.automation.v1.AutomationControlService/SetSimulationTickRate"
 	AutomationControlService_InjectAction_FullMethodName          = "/gogoxel.automation.v1.AutomationControlService/InjectAction"
+	AutomationControlService_SetSelectedMaterial_FullMethodName   = "/gogoxel.automation.v1.AutomationControlService/SetSelectedMaterial"
+	AutomationControlService_EditAtCursor_FullMethodName          = "/gogoxel.automation.v1.AutomationControlService/EditAtCursor"
 	AutomationControlService_ClickUiElement_FullMethodName        = "/gogoxel.automation.v1.AutomationControlService/ClickUiElement"
 	AutomationControlService_StepTicks_FullMethodName             = "/gogoxel.automation.v1.AutomationControlService/StepTicks"
 	AutomationControlService_StepFrames_FullMethodName            = "/gogoxel.automation.v1.AutomationControlService/StepFrames"
@@ -219,6 +221,8 @@ type AutomationControlServiceClient interface {
 	SetCamera(ctx context.Context, in *SetCameraRequest, opts ...grpc.CallOption) (*SetCameraResponse, error)
 	SetSimulationTickRate(ctx context.Context, in *SetSimulationTickRateRequest, opts ...grpc.CallOption) (*SetSimulationTickRateResponse, error)
 	InjectAction(ctx context.Context, in *InjectActionRequest, opts ...grpc.CallOption) (*InjectActionResponse, error)
+	SetSelectedMaterial(ctx context.Context, in *SetSelectedMaterialRequest, opts ...grpc.CallOption) (*SetSelectedMaterialResponse, error)
+	EditAtCursor(ctx context.Context, in *EditAtCursorRequest, opts ...grpc.CallOption) (*EditAtCursorResponse, error)
 	ClickUiElement(ctx context.Context, in *ClickUiElementRequest, opts ...grpc.CallOption) (*ClickUiElementResponse, error)
 	StepTicks(ctx context.Context, in *StepTicksRequest, opts ...grpc.CallOption) (*StepTicksResponse, error)
 	StepFrames(ctx context.Context, in *StepFramesRequest, opts ...grpc.CallOption) (*StepFramesResponse, error)
@@ -279,6 +283,26 @@ func (c *automationControlServiceClient) InjectAction(ctx context.Context, in *I
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(InjectActionResponse)
 	err := c.cc.Invoke(ctx, AutomationControlService_InjectAction_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *automationControlServiceClient) SetSelectedMaterial(ctx context.Context, in *SetSelectedMaterialRequest, opts ...grpc.CallOption) (*SetSelectedMaterialResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SetSelectedMaterialResponse)
+	err := c.cc.Invoke(ctx, AutomationControlService_SetSelectedMaterial_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *automationControlServiceClient) EditAtCursor(ctx context.Context, in *EditAtCursorRequest, opts ...grpc.CallOption) (*EditAtCursorResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(EditAtCursorResponse)
+	err := c.cc.Invoke(ctx, AutomationControlService_EditAtCursor_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -354,6 +378,8 @@ type AutomationControlServiceServer interface {
 	SetCamera(context.Context, *SetCameraRequest) (*SetCameraResponse, error)
 	SetSimulationTickRate(context.Context, *SetSimulationTickRateRequest) (*SetSimulationTickRateResponse, error)
 	InjectAction(context.Context, *InjectActionRequest) (*InjectActionResponse, error)
+	SetSelectedMaterial(context.Context, *SetSelectedMaterialRequest) (*SetSelectedMaterialResponse, error)
+	EditAtCursor(context.Context, *EditAtCursorRequest) (*EditAtCursorResponse, error)
 	ClickUiElement(context.Context, *ClickUiElementRequest) (*ClickUiElementResponse, error)
 	StepTicks(context.Context, *StepTicksRequest) (*StepTicksResponse, error)
 	StepFrames(context.Context, *StepFramesRequest) (*StepFramesResponse, error)
@@ -384,6 +410,12 @@ func (UnimplementedAutomationControlServiceServer) SetSimulationTickRate(context
 }
 func (UnimplementedAutomationControlServiceServer) InjectAction(context.Context, *InjectActionRequest) (*InjectActionResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method InjectAction not implemented")
+}
+func (UnimplementedAutomationControlServiceServer) SetSelectedMaterial(context.Context, *SetSelectedMaterialRequest) (*SetSelectedMaterialResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SetSelectedMaterial not implemented")
+}
+func (UnimplementedAutomationControlServiceServer) EditAtCursor(context.Context, *EditAtCursorRequest) (*EditAtCursorResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method EditAtCursor not implemented")
 }
 func (UnimplementedAutomationControlServiceServer) ClickUiElement(context.Context, *ClickUiElementRequest) (*ClickUiElementResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ClickUiElement not implemented")
@@ -511,6 +543,42 @@ func _AutomationControlService_InjectAction_Handler(srv interface{}, ctx context
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(AutomationControlServiceServer).InjectAction(ctx, req.(*InjectActionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AutomationControlService_SetSelectedMaterial_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetSelectedMaterialRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AutomationControlServiceServer).SetSelectedMaterial(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AutomationControlService_SetSelectedMaterial_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AutomationControlServiceServer).SetSelectedMaterial(ctx, req.(*SetSelectedMaterialRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AutomationControlService_EditAtCursor_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(EditAtCursorRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AutomationControlServiceServer).EditAtCursor(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AutomationControlService_EditAtCursor_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AutomationControlServiceServer).EditAtCursor(ctx, req.(*EditAtCursorRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -649,6 +717,14 @@ var AutomationControlService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "InjectAction",
 			Handler:    _AutomationControlService_InjectAction_Handler,
+		},
+		{
+			MethodName: "SetSelectedMaterial",
+			Handler:    _AutomationControlService_SetSelectedMaterial_Handler,
+		},
+		{
+			MethodName: "EditAtCursor",
+			Handler:    _AutomationControlService_EditAtCursor_Handler,
 		},
 		{
 			MethodName: "ClickUiElement",

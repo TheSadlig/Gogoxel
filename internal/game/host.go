@@ -13,6 +13,7 @@ type HostOptions struct {
 	Headless     bool
 	HiddenWindow bool
 	Live         bool
+	AutomationExposed bool
 	TickRateHz   int
 	ArtifactDir  string
 }

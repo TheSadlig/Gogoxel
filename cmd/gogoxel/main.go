@@ -28,6 +28,7 @@ func main() {
 		if err := runSession(*listenAddress, game.HostOptions{
 			Headless:     *headless,
 			HiddenWindow: *hiddenWindow,
+			AutomationExposed: true,
 			TickRateHz:   *tickRateHz,
 			ArtifactDir:  *artifactDir,
 		}); err != nil {
@@ -44,6 +45,7 @@ func main() {
 		Headless:     *headless,
 		HiddenWindow: *hiddenWindow,
 		Live:         true,
+		AutomationExposed: strings.TrimSpace(*liveListenAddress) != "",
 		TickRateHz:   *tickRateHz,
 		ArtifactDir:  *artifactDir,
 	}); err != nil {
@@ -74,6 +76,9 @@ func runSession(listenAddress string, options game.HostOptions) error {
 		}()
 
 		log.Printf("automation gRPC listening on %s", listener.Addr())
+	}
+	if !options.Headless && !options.HiddenWindow {
+		log.Printf("%s", game.ManualControlsSummary())
 	}
 	runErr := host.Run(context.Background())
 	if server != nil {

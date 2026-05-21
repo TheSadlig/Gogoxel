@@ -109,15 +109,23 @@ func (r *Renderer) destroyStagingRings() {
 		if ring == nil {
 			continue
 		}
-		if !isZeroValue(ring.memory) {
-			vk.UnmapMemory(r.device, ring.memory)
-			vk.FreeMemory(r.device, ring.memory, nil)
-		}
-		if !isZeroValue(ring.buffer) {
-			vk.DestroyBuffer(r.device, ring.buffer, nil)
-		}
+		ring.destroy(r.device)
 		r.stagingRings[slot] = nil
 	}
+}
+
+func (ring *stagingRing) destroy(device vk.Device) {
+	if ring == nil {
+		return
+	}
+	if !isZeroValue(ring.memory) {
+		vk.UnmapMemory(device, ring.memory)
+		vk.FreeMemory(device, ring.memory, nil)
+	}
+	if !isZeroValue(ring.buffer) {
+		vk.DestroyBuffer(device, ring.buffer, nil)
+	}
+	*ring = stagingRing{}
 }
 
 // stagingAlloc reserves `size` bytes of host-coherent staging memory inside
@@ -143,6 +151,36 @@ func (r *Renderer) stagingAlloc(frameSlot int, size vk.DeviceSize, alignment vk.
 	dst := unsafe.Pointer(uintptr(ring.mapped) + uintptr(aligned))
 	ring.offset = aligned + size
 	return ring.buffer, aligned, dst, nil
+}
+
+func stagingRingCanAllocate(ring *stagingRing, size vk.DeviceSize, alignment vk.DeviceSize) bool {
+	if ring == nil {
+		return false
+	}
+	if alignment < 1 {
+		alignment = 1
+	}
+	aligned := alignDeviceSize(ring.offset, alignment)
+	return aligned+size <= ring.size
+}
+
+func (r *Renderer) stagingAllocForUpload(frameSlot int, size vk.DeviceSize, alignment vk.DeviceSize) (vk.Buffer, vk.DeviceSize, unsafe.Pointer, func(), error) {
+	if frameSlot < 0 || frameSlot >= len(r.stagingRings) {
+		return vk.NullBuffer, 0, nil, nil, fmt.Errorf("frame slot %d out of range", frameSlot)
+	}
+	ring := r.stagingRings[frameSlot]
+	if ring == nil {
+		return vk.NullBuffer, 0, nil, nil, fmt.Errorf("staging ring not initialized for slot %d", frameSlot)
+	}
+	if size <= stagingRingBytesPerSlot && stagingRingCanAllocate(ring, size, alignment) {
+		buffer, offset, dst, err := r.stagingAlloc(frameSlot, size, alignment)
+		return buffer, offset, dst, nil, err
+	}
+	ring, err := r.createStagingRing(size)
+	if err != nil {
+		return vk.NullBuffer, 0, nil, nil, err
+	}
+	return ring.buffer, 0, ring.mapped, func() { ring.destroy(r.device) }, nil
 }
 
 func (r *Renderer) resetStagingRing(frameSlot int) {

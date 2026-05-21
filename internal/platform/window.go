@@ -92,6 +92,24 @@ func (w *Window) IsKeyDown(key glfw.Key) bool {
 	return w.handle != nil && w.handle.GetKey(key) == glfw.Press
 }
 
+func (w *Window) IsMouseButtonDown(button glfw.MouseButton) bool {
+	return w.handle != nil && w.handle.GetMouseButton(button) == glfw.Press
+}
+
+func (w *Window) CursorPosition() (float64, float64) {
+	if w.handle == nil {
+		return 0, 0
+	}
+	return w.handle.GetCursorPos()
+}
+
+func (w *Window) Size() (int, int) {
+	if w.handle == nil {
+		return 0, 0
+	}
+	return w.handle.GetSize()
+}
+
 func (w *Window) FramebufferSize() (int, int) {
 	if w.handle == nil {
 		return 0, 0

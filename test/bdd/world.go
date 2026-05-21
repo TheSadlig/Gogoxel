@@ -5,8 +5,10 @@ package bdd
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"image/color"
 	"image/png"
 	"math"
 	"net"
@@ -37,6 +39,8 @@ type automationDriver interface {
 	GetCamera(context.Context) (platform.Camera, error)
 	PressAction(context.Context, string) error
 	ReleaseAction(context.Context, string) error
+	SetSelectedMaterial(context.Context, string) error
+	EditAtCursor(context.Context, session.EditMode, session.CursorPosition) (session.CursorEditResult, error)
 	StepTicks(context.Context, int) (session.StepResult, error)
 	StepFrames(context.Context, int) (session.StepResult, error)
 	WaitUntilReady(context.Context, session.WaitCriteria) (session.Readiness, error)
@@ -86,8 +90,10 @@ type scenarioHarness struct {
 	lastReadiness  session.Readiness
 	lastMetrics    session.MetricsSnapshot
 	lastStep       session.StepResult
+	lastEdit       session.CursorEditResult
 	lastScreenshot session.ArtifactInfo
 	lastTrace      session.ArtifactInfo
+	lastMetricsArtifact string
 	mode           sessionMode
 	runMode        sessionRunMode
 	address        string
@@ -117,6 +123,7 @@ func InitializeScenario(ctx *godog.ScenarioContext) {
 	ctx.Step(`^an automation session is started in headless mode$`, harness.startHeadless)
 	ctx.Step(`^an automation session is started in hidden-window mode$`, harness.startHiddenWindow)
 	ctx.Step(`^a live automation session is started in headless mode$`, harness.startLiveHeadless)
+	ctx.Step(`^a live automation session is started in hidden-window mode$`, harness.startLiveHiddenWindow)
 	ctx.Step(`^the engine is reset to a clean state$`, harness.resetEngine)
 	ctx.Step(`^the simulation tick rate is (\d+) Hz$`, harness.setTickRate)
 	ctx.Step(`^the generator "([^"]+)" is loaded$`, harness.loadGenerator)
@@ -126,14 +133,26 @@ func InitializeScenario(ctx *godog.ScenarioContext) {
 	ctx.Step(`^I advance the simulation by (\d+) ticks$`, harness.advanceTicks)
 	ctx.Step(`^I advance the simulation by (\d+) frames$`, harness.advanceFrames)
 	ctx.Step(`^the automation session becomes render-ready$`, harness.waitForRendererReady)
+	ctx.Step(`^the automation session becomes streaming-settled$`, harness.waitForStreamingSettled)
 	ctx.Step(`^I reset the metrics window$`, harness.resetMetricsWindow)
 	ctx.Step(`^the camera x position should be approximately (-?\d+(?:\.\d+)?) within (\d+(?:\.\d+)?)$`, harness.expectCameraX)
 	ctx.Step(`^the camera x position should eventually be above (-?\d+(?:\.\d+)?) within (\d+(?:\.\d+)?) seconds$`, harness.expectCameraXEventuallyAbove)
 	ctx.Step(`^the metrics window should contain at least (\d+) samples$`, harness.expectMetricSamples)
+	ctx.Step(`^the metrics window should eventually contain at least (\d+) samples within (\d+(?:\.\d+)?) seconds$`, harness.expectMetricSamplesEventually)
+	ctx.Step(`^the current scene should contain at least (\d+) bricks$`, harness.expectBrickCountAtLeast)
 	ctx.Step(`^the average FPS should be above (\d+(?:\.\d+)?)$`, harness.expectAverageFPS)
+	ctx.Step(`^the average FPS should be below (\d+(?:\.\d+)?)$`, harness.expectAverageFPSBelow)
 	ctx.Step(`^the renderer device name should not be empty$`, harness.expectRendererDevice)
+	ctx.Step(`^the selected cube material is "([^"]+)"$`, harness.selectCubeMaterial)
+	ctx.Step(`^I place a cube through the centered cursor ray$`, harness.placeCubeAtCenterCursor)
+	ctx.Step(`^I remove a cube through the centered cursor ray$`, harness.removeCubeAtCenterCursor)
+	ctx.Step(`^the last cursor edit should have changed the scene$`, harness.expectLastCursorEditChanged)
+	ctx.Step(`^the last cursor edit should target voxel x (\d+) y (\d+) z (\d+)$`, harness.expectLastCursorEditTarget)
+	ctx.Step(`^I write the metrics artifact "([^"]+)"$`, harness.writeMetricsArtifact)
+	ctx.Step(`^the metrics artifact should exist$`, harness.expectMetricsArtifact)
 	ctx.Step(`^I capture the screenshot artifact "([^"]+)"$`, harness.captureScreenshot)
 	ctx.Step(`^the screenshot artifact should exist$`, harness.expectScreenshotArtifact)
+	ctx.Step(`^the screenshot artifact should contain at least (\d+) percent non-background pixels$`, harness.expectScreenshotContainsNonBackgroundPixels)
 	ctx.Step(`^I export the trace artifact "([^"]+)"$`, harness.exportTrace)
 	ctx.Step(`^the trace artifact should exist$`, harness.expectTraceArtifact)
 	ctx.Step(`^the trace artifact should contain "([^"]+)"$`, harness.expectTraceContains)
@@ -150,8 +169,32 @@ func (h *scenarioHarness) startHiddenWindow() error {
 	return h.startSession(sessionModeHiddenWindow, sessionRunModeManual)
 }
 
+func (h *scenarioHarness) expectBrickCountAtLeast(expected int) error {
+	if h.lastMetrics.BrickCount >= expected {
+		return nil
+	}
+	ctx, cancel := rpcContext()
+	defer cancel()
+	metrics, err := h.driver.GetMetrics(ctx)
+	if err != nil {
+		return err
+	}
+	h.lastMetrics = metrics
+	if got := int(metrics.BrickCount); got < expected {
+		return fmt.Errorf("metrics.BrickCount = %d, want >= %d", got, expected)
+	}
+	return nil
+}
+
 func (h *scenarioHarness) startLiveHeadless() error {
 	return h.startSession(sessionModeHeadless, sessionRunModeLive)
+}
+
+func (h *scenarioHarness) startLiveHiddenWindow() error {
+	if strings.TrimSpace(os.Getenv("GOGOXEL_BDD_GPU")) == "" {
+		return godog.ErrSkip
+	}
+	return h.startSession(sessionModeHiddenWindow, sessionRunModeLive)
 }
 
 func (h *scenarioHarness) startSession(mode sessionMode, runMode sessionRunMode) error {
@@ -398,6 +441,22 @@ func (h *scenarioHarness) waitForRendererReady() error {
 	return nil
 }
 
+func (h *scenarioHarness) waitForStreamingSettled() error {
+	ctx, cancel := context.WithTimeout(context.Background(), generatorLoadTimeout)
+	defer cancel()
+	readiness, err := h.driver.WaitUntilReady(ctx, session.WaitCriteria{
+		RequireRenderer:         true,
+		RequireSceneLoaded:      true,
+		RequireStreamingSettled: true,
+		MaxTicks:                2400,
+	})
+	if err != nil {
+		return err
+	}
+	h.lastReadiness = readiness
+	return nil
+}
+
 func (h *scenarioHarness) resetMetricsWindow() error {
 	ctx, cancel := rpcContext()
 	defer cancel()
@@ -459,6 +518,22 @@ func (h *scenarioHarness) expectMetricSamples(minimum int) error {
 	return nil
 }
 
+func (h *scenarioHarness) expectMetricSamplesEventually(minimum int, timeoutSeconds float64) error {
+	deadline := time.Now().Add(time.Duration(timeoutSeconds * float64(time.Second)))
+	for time.Now().Before(deadline) {
+		metrics, err := h.refreshMetrics()
+		if err == nil && metrics.FrameSampleCount >= minimum {
+			return nil
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	metrics, err := h.refreshMetrics()
+	if err != nil {
+		return err
+	}
+	return fmt.Errorf("expected at least %d metric samples within %.2f seconds, got %d", minimum, timeoutSeconds, metrics.FrameSampleCount)
+}
+
 func (h *scenarioHarness) expectAverageFPS(minimum float64) error {
 	metrics, err := h.refreshMetrics()
 	if err != nil {
@@ -470,6 +545,17 @@ func (h *scenarioHarness) expectAverageFPS(minimum float64) error {
 	return nil
 }
 
+func (h *scenarioHarness) expectAverageFPSBelow(maximum float64) error {
+	metrics, err := h.refreshMetrics()
+	if err != nil {
+		return err
+	}
+	if metrics.AverageFPS >= maximum {
+		return fmt.Errorf("expected average FPS below %.2f, got %.2f", maximum, metrics.AverageFPS)
+	}
+	return nil
+}
+
 func (h *scenarioHarness) expectRendererDevice() error {
 	metrics, err := h.refreshMetrics()
 	if err != nil {
@@ -477,6 +563,88 @@ func (h *scenarioHarness) expectRendererDevice() error {
 	}
 	if strings.TrimSpace(metrics.RendererDevice) == "" {
 		return fmt.Errorf("expected a non-empty renderer device name")
+	}
+	return nil
+}
+
+func (h *scenarioHarness) selectCubeMaterial(name string) error {
+	ctx, cancel := rpcContext()
+	defer cancel()
+	return h.driver.SetSelectedMaterial(ctx, name)
+}
+
+func (h *scenarioHarness) placeCubeAtCenterCursor() error {
+	ctx, cancel := rpcContext()
+	defer cancel()
+	result, err := h.driver.EditAtCursor(ctx, session.EditModePlace, session.CursorPosition{NormalizedX: 0.5, NormalizedY: 0.5})
+	if err != nil {
+		return err
+	}
+	h.lastEdit = result
+	return nil
+}
+
+func (h *scenarioHarness) removeCubeAtCenterCursor() error {
+	ctx, cancel := rpcContext()
+	defer cancel()
+	result, err := h.driver.EditAtCursor(ctx, session.EditModeRemove, session.CursorPosition{NormalizedX: 0.5, NormalizedY: 0.5})
+	if err != nil {
+		return err
+	}
+	h.lastEdit = result
+	return nil
+}
+
+func (h *scenarioHarness) expectLastCursorEditTarget(x, y, z int) error {
+	got := h.lastEdit.TargetVoxel
+	want := [3]uint32{uint32(x), uint32(y), uint32(z)}
+	if got != want {
+		return fmt.Errorf("expected last cursor edit target %v, got %v", want, got)
+	}
+	return nil
+}
+
+func (h *scenarioHarness) expectLastCursorEditChanged() error {
+	if !h.lastEdit.Changed {
+		return fmt.Errorf("expected last cursor edit to change the scene")
+	}
+	return nil
+}
+
+func (h *scenarioHarness) writeMetricsArtifact(name string) error {
+	metrics, err := h.refreshMetrics()
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(name) == "" {
+		name = "metrics"
+	}
+	fileName := filepath.Base(name)
+	if !strings.HasSuffix(strings.ToLower(fileName), ".json") {
+		fileName += ".json"
+	}
+	path := filepath.Join(h.artifactDir, fileName)
+	payload, err := json.MarshalIndent(metrics, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshalling metrics artifact: %w", err)
+	}
+	if err := os.WriteFile(path, append(payload, '\n'), 0o644); err != nil {
+		return fmt.Errorf("writing metrics artifact: %w", err)
+	}
+	h.lastMetricsArtifact = path
+	return nil
+}
+
+func (h *scenarioHarness) expectMetricsArtifact() error {
+	if strings.TrimSpace(h.lastMetricsArtifact) == "" {
+		return fmt.Errorf("no metrics artifact has been written")
+	}
+	info, err := os.Stat(h.lastMetricsArtifact)
+	if err != nil {
+		return err
+	}
+	if info.Size() == 0 {
+		return fmt.Errorf("metrics artifact is empty: %s", h.lastMetricsArtifact)
 	}
 	return nil
 }
@@ -512,6 +680,58 @@ func (h *scenarioHarness) expectScreenshotArtifact() error {
 		return fmt.Errorf("decoding screenshot artifact: %w", err)
 	}
 	return nil
+}
+
+func (h *scenarioHarness) expectScreenshotContainsNonBackgroundPixels(minimumPercent int) error {
+	if err := h.expectScreenshotArtifact(); err != nil {
+		return err
+	}
+	file, err := os.Open(h.lastScreenshot.Path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	imageData, err := png.Decode(file)
+	if err != nil {
+		return fmt.Errorf("decoding screenshot artifact: %w", err)
+	}
+	bounds := imageData.Bounds()
+	if bounds.Empty() {
+		return fmt.Errorf("screenshot artifact has empty bounds: %s", h.lastScreenshot.Path)
+	}
+
+	background := imageData.At(bounds.Min.X, bounds.Min.Y)
+	totalPixels := bounds.Dx() * bounds.Dy()
+	nonBackgroundPixels := 0
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			if pixelDiffersFromBackground(imageData.At(x, y), background) {
+				nonBackgroundPixels++
+			}
+		}
+	}
+	percent := float64(nonBackgroundPixels) * 100 / float64(totalPixels)
+	if percent < float64(minimumPercent) {
+		return fmt.Errorf("expected screenshot artifact to contain at least %d%% non-background pixels, got %.2f%%", minimumPercent, percent)
+	}
+	return nil
+}
+
+func pixelDiffersFromBackground(a, b color.Color) bool {
+	ar, ag, ab, aa := a.RGBA()
+	br, bg, bb, ba := b.RGBA()
+	return absColorDelta(ar, br) > 0x0300 ||
+		absColorDelta(ag, bg) > 0x0300 ||
+		absColorDelta(ab, bb) > 0x0300 ||
+		absColorDelta(aa, ba) > 0x0300
+}
+
+func absColorDelta(a, b uint32) uint32 {
+	if a > b {
+		return a - b
+	}
+	return b - a
 }
 
 func (h *scenarioHarness) exportTrace(name string) error {

@@ -21,7 +21,10 @@ const (
 type Brick struct {
 	NodeIndex uint32
 	Origin    [3]uint32
-	Voxels    [BrickVoxelCount]uint8
+	// Voxels is a pointer so that assignEditableBrickIndices can copy bricks
+	// without a 512-byte memcpy for every unchanged brick in the scene.
+	// Copy-on-write in editVoxelNode ensures pointer identity detects changes.
+	Voxels *[BrickVoxelCount]uint8
 }
 
 type Snapshot struct {
@@ -32,17 +35,34 @@ type Snapshot struct {
 	HasOccupiedBounds bool
 }
 
+type editApplyMode uint8
+
+const (
+	editApplyModeNone editApplyMode = iota
+	editApplyModeIncremental
+	editApplyModeFullRebuild
+)
+
+type editStats struct {
+	mode          editApplyMode
+	touchedBricks int
+}
+
 type SVO struct {
 	nodes []SvoNode
 	size  uint
 
 	palette         [PaletteSize]uint32
 	bricks          []Brick
+	storageWords    []uint32
 	colorToMaterial map[uint32]uint8
+	brickNodeLookup map[uint32]int
+	editableRoot    *stagingNode
 
 	occupiedMin       [3]uint
 	occupiedMax       [3]uint
 	hasOccupiedBounds bool
+	lastEdit          editStats
 }
 
 // SvoNode is the on-GPU SVO node. The first word (Payload) packs different
@@ -92,6 +112,7 @@ type stagingNode struct {
 	SvoNode
 	tempChildren [8]*stagingNode
 	brickIndex   int
+	brickVoxels  *[BrickVoxelCount]uint8
 }
 
 func newStagingNode() *stagingNode {
@@ -145,7 +166,10 @@ func (s *SVO) BuildTreeSparseVolumes(size uint, emit func(addVoxel func(x, y, z 
 
 	if root == nil {
 		s.nodes = make([]SvoNode, 1)
+		s.rebuildStorageWords()
 		s.colorToMaterial = nil
+		s.brickNodeLookup = nil
+		s.editableRoot = nil
 		return
 	}
 
@@ -155,14 +179,18 @@ func (s *SVO) BuildTreeSparseVolumes(size uint, emit func(addVoxel func(x, y, z 
 		s.fillBrickJobsParallel(brickJobs)
 	}
 	s.nodes = s.nodes[:0]
+	s.editableRoot = root
 	s.flattenTree(root)
 	s.colorToMaterial = nil
+	s.rebuildBrickNodeLookup()
+	s.rebuildStorageWords()
 }
 
 func (s *SVO) LoadStorageBufferWords(words []uint32, occupiedMin, occupiedMax [3]uint32, hasOccupiedBounds bool) error {
 	if len(words) < storageWordCount {
 		return fmt.Errorf("storage buffer words must include at least the size header")
 	}
+	s.lastEdit = editStats{}
 
 	nodeCount, paletteOffset, err := parseNodeCount(words)
 	if err != nil {
@@ -190,15 +218,19 @@ func (s *SVO) LoadStorageBufferWords(words []uint32, occupiedMin, occupiedMax [3
 
 	s.bricks = nil
 	s.colorToMaterial = nil
+	s.brickNodeLookup = nil
+	s.editableRoot = nil
 	s.hasOccupiedBounds = hasOccupiedBounds
 	if hasOccupiedBounds {
 		s.occupiedMin = [3]uint{uint(occupiedMin[0]), uint(occupiedMin[1]), uint(occupiedMin[2])}
 		s.occupiedMax = [3]uint{uint(occupiedMax[0]), uint(occupiedMax[1]), uint(occupiedMax[2])}
+		s.rebuildStorageWords()
 		return nil
 	}
 
 	s.occupiedMin = [3]uint{}
 	s.occupiedMax = [3]uint{}
+	s.rebuildStorageWords()
 	return nil
 }
 
@@ -236,6 +268,7 @@ func (s *SVO) LoadSnapshot(snapshot Snapshot) error {
 
 	s.bricks = make([]Brick, len(snapshot.Bricks))
 	copy(s.bricks, snapshot.Bricks)
+	s.rebuildBrickNodeLookup()
 	return nil
 }
 
@@ -261,10 +294,14 @@ func (s *SVO) beginBuild(size uint) map[uint64]*stagingNode {
 	s.nodes = s.nodes[:0]
 	clear(s.palette[:])
 	s.bricks = nil
+	s.storageWords = nil
 	s.colorToMaterial = make(map[uint32]uint8)
+	s.brickNodeLookup = nil
+	s.editableRoot = nil
 	s.occupiedMin = [3]uint{}
 	s.occupiedMax = [3]uint{}
 	s.hasOccupiedBounds = false
+	s.lastEdit = editStats{}
 	return make(map[uint64]*stagingNode)
 }
 
@@ -272,6 +309,41 @@ func (s *SVO) finishBuild(leafLayer map[uint64]*stagingNode) {
 	s.deriveOccupiedBounds(leafLayer)
 	s.buildFromLeafLayer(leafLayer)
 	s.colorToMaterial = nil
+	s.rebuildStorageWords()
+}
+
+func (s *SVO) rebuildStorageWords() {
+	if s == nil || len(s.nodes) == 0 {
+		s.storageWords = nil
+		return
+	}
+
+	required := storageWordCount + len(s.nodes)*2 + PaletteSize
+	if cap(s.storageWords) < required {
+		s.storageWords = make([]uint32, required)
+	} else {
+		s.storageWords = s.storageWords[:required]
+	}
+	s.storageWords[0] = uint32(s.size)
+	s.storageWords[1] = uint32(len(s.nodes))
+	for index, node := range s.nodes {
+		wordIndex := storageWordCount + index*2
+		s.storageWords[wordIndex] = node.payload
+		s.storageWords[wordIndex+1] = node.childPointer
+	}
+	copy(s.storageWords[storageWordCount+len(s.nodes)*2:], s.palette[:])
+}
+
+func (s *SVO) syncStorageWordsPalette() {
+	if s == nil || len(s.nodes) == 0 {
+		return
+	}
+	required := storageWordCount + len(s.nodes)*2 + PaletteSize
+	if len(s.storageWords) < required {
+		s.rebuildStorageWords()
+		return
+	}
+	copy(s.storageWords[storageWordCount+len(s.nodes)*2:], s.palette[:])
 }
 
 func (s *SVO) addLeaf(leafLayer map[uint64]*stagingNode, x, y, z uint, color uint32) {
@@ -584,11 +656,15 @@ func (s *SVO) buildFromLeafLayer(leafLayer map[uint64]*stagingNode) {
 
 	if root == nil {
 		s.nodes = make([]SvoNode, 1)
+		s.brickNodeLookup = nil
+		s.editableRoot = nil
 		return
 	}
 
 	s.nodes = make([]SvoNode, 0)
+	s.editableRoot = root
 	s.flattenTree(root)
+	s.rebuildBrickNodeLookup()
 }
 
 func (s *SVO) finalizeParent(parent *stagingNode) {
@@ -644,9 +720,11 @@ func (s *SVO) finalizeBrickParent(parent *stagingNode, key uint64) {
 	}
 
 	originX, originY, originZ := voxelKeyXYZ(key)
-	brick := Brick{Origin: [3]uint32{uint32(originX), uint32(originY), uint32(originZ)}}
-	s.fillBrickVoxels(&brick.Voxels, parent, BrickSize, 0, 0, 0)
+	voxels := &[BrickVoxelCount]uint8{}
+	brick := Brick{Origin: [3]uint32{uint32(originX), uint32(originY), uint32(originZ)}, Voxels: voxels}
+	s.fillBrickVoxels(voxels, parent, BrickSize, 0, 0, 0)
 	parent.tempChildren = [8]*stagingNode{}
+	parent.brickVoxels = voxels
 	parent.setBrickLeaf(0)
 	parent.brickIndex = len(s.bricks)
 	s.bricks = append(s.bricks, brick)
@@ -663,11 +741,19 @@ func (s *SVO) fillBrickJobsParallel(jobs []*stagingNode) {
 	if workers > len(jobs) {
 		workers = len(jobs)
 	}
+	// Pre-allocate voxel backing arrays for all jobs; parallel workers then
+	// fill them without touching each other's slice entries.
+	for _, parent := range jobs {
+		s.bricks[parent.brickIndex].Voxels = &[BrickVoxelCount]uint8{}
+	}
+
 	// Skip the goroutine overhead for trivially small batches.
 	if workers == 1 {
 		for _, parent := range jobs {
-			s.fillBrickVoxels(&s.bricks[parent.brickIndex].Voxels, parent, BrickSize, 0, 0, 0)
+			voxels := s.bricks[parent.brickIndex].Voxels
+			s.fillBrickVoxels(voxels, parent, BrickSize, 0, 0, 0)
 			parent.tempChildren = [8]*stagingNode{}
+			parent.brickVoxels = voxels
 			parent.setBrickLeaf(0)
 		}
 		return
@@ -685,8 +771,10 @@ func (s *SVO) fillBrickJobsParallel(jobs []*stagingNode) {
 					return
 				}
 				parent := jobs[i]
-				s.fillBrickVoxels(&s.bricks[parent.brickIndex].Voxels, parent, BrickSize, 0, 0, 0)
+				voxels := s.bricks[parent.brickIndex].Voxels
+				s.fillBrickVoxels(voxels, parent, BrickSize, 0, 0, 0)
 				parent.tempChildren = [8]*stagingNode{}
+				parent.brickVoxels = voxels
 				parent.setBrickLeaf(0)
 			}
 		}()
@@ -797,20 +885,28 @@ func (s *SVO) flattenTreeInto(root *stagingNode, nodeIdx uint32) {
 }
 
 func (s *SVO) StorageBufferWords() []uint32 {
-	if s == nil || len(s.nodes) == 0 {
+	words := s.StorageBufferWordsRef()
+	if len(words) == 0 {
 		return nil
 	}
 
-	words := make([]uint32, storageWordCount+len(s.nodes)*2+PaletteSize)
-	words[0] = uint32(s.size)
-	words[1] = uint32(len(s.nodes))
-	for index, node := range s.nodes {
-		wordIndex := storageWordCount + index*2
-		words[wordIndex] = node.payload
-		words[wordIndex+1] = node.childPointer
+	clone := make([]uint32, len(words))
+	copy(clone, words)
+	return clone
+}
+
+// StorageBufferWordsRef returns the cached storage-buffer payload backing the
+// current SVO snapshot. Callers must treat the returned slice as read-only and
+// must not retain it across rebuilds, reloads, or voxel edits that can refresh
+// the underlying storage words.
+func (s *SVO) StorageBufferWordsRef() []uint32 {
+	if s == nil || len(s.nodes) == 0 {
+		return nil
 	}
-	copy(words[storageWordCount+len(s.nodes)*2:], s.palette[:])
-	return words
+	if len(s.storageWords) == 0 {
+		s.rebuildStorageWords()
+	}
+	return s.storageWords
 }
 
 func (s *SVO) NodeCount() int {
