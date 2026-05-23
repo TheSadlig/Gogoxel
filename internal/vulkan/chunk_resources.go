@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"unsafe"
 
+	"Gogoxel/internal/platform"
 	"Gogoxel/internal/world"
 
 	vk "github.com/vulkan-go/vulkan"
@@ -13,18 +14,19 @@ import (
 type ChunkResources struct {
 	DescriptorSet vk.DescriptorSet
 
-	device         vk.Device
-	descriptorPool vk.DescriptorPool
-	buffer         vk.Buffer
-	bufferMemory   vk.DeviceMemory
-	bufferBytes    vk.DeviceSize
-	brickPool      *brickPool
-	ownsBrickPool  bool
-	streamer       *brickStreamer
-	pendingWords   []uint32
-	pendingBricks  []world.Brick
-	cameraPosition [3]float32
-	cameraEverSet  bool
+	device             vk.Device
+	descriptorPool     vk.DescriptorPool
+	buffer             vk.Buffer
+	bufferMemory       vk.DeviceMemory
+	bufferBytes        vk.DeviceSize
+	brickPool          *brickPool
+	ownsBrickPool      bool
+	streamer           *brickStreamer
+	pendingWords       []uint32
+	pendingBricks      []world.Brick
+	pendingSceneOrigin [3]int32
+	camera             platform.Camera
+	cameraEverSet      bool
 }
 
 const minChunkStorageBufferBytes vk.DeviceSize = 64 * 1024
@@ -65,7 +67,7 @@ func (r *Renderer) CreateChunkResourcesFromData(chunkBindings *ChunkBindings, da
 	return chunk, nil
 }
 
-func (r *Renderer) CreateChunkResourcesFromSVO(chunkBindings *ChunkBindings, svo *world.SVO) (*ChunkResources, error) {
+func (r *Renderer) CreateChunkResourcesFromSVO(chunkBindings *ChunkBindings, svo *world.SVO, sceneOrigin [3]int32) (*ChunkResources, error) {
 	if svo == nil {
 		return nil, errors.New("svo is required")
 	}
@@ -92,6 +94,9 @@ func (r *Renderer) CreateChunkResourcesFromSVO(chunkBindings *ChunkBindings, svo
 		return nil, err
 	}
 	chunk.streamer = newBrickStreamer(svo.BricksRef())
+	if chunk.streamer != nil {
+		chunk.streamer.setSceneOrigin(sceneOrigin)
+	}
 
 	return chunk, nil
 }
@@ -266,7 +271,7 @@ func growChunkStorageBufferSize(size vk.DeviceSize) vk.DeviceSize {
 	return capacity
 }
 
-func (chunk *ChunkResources) QueueSceneUpdate(svo *world.SVO) bool {
+func (chunk *ChunkResources) QueueSceneUpdate(svo *world.SVO, sceneOrigin [3]int32) bool {
 	if chunk == nil || svo == nil {
 		return false
 	}
@@ -280,6 +285,7 @@ func (chunk *ChunkResources) QueueSceneUpdate(svo *world.SVO) bool {
 	}
 	chunk.pendingWords = words
 	chunk.pendingBricks = svo.BricksRef()
+	chunk.pendingSceneOrigin = sceneOrigin
 	return true
 }
 
@@ -307,11 +313,12 @@ func (chunk *ChunkResources) RecordSceneUpdate(frame *Frame) error {
 
 	plan := sceneUpdatePlan{}
 	if chunk.streamer != nil {
-		plan = chunk.streamer.replaceSceneBricks(chunk.brickPool, chunk.pendingBricks)
+		plan = chunk.streamer.replaceSceneBricks(chunk.brickPool, chunk.pendingSceneOrigin, chunk.pendingBricks)
 	} else if len(chunk.pendingBricks) > 0 {
 		chunk.streamer = newBrickStreamer(chunk.pendingBricks)
+		chunk.streamer.setSceneOrigin(chunk.pendingSceneOrigin)
 		if chunk.streamer != nil && chunk.cameraEverSet {
-			chunk.streamer.primeCameraPosition(chunk.cameraPosition)
+			chunk.streamer.primeCamera(chunk.camera)
 		}
 	}
 

@@ -76,7 +76,15 @@ func (s *SVO) rebuildEditableNode(nodeIndex uint32, nodeSize uint) (*stagingNode
 		if !ok {
 			return nil, false
 		}
+		if s.brickNodeLookup == nil {
+			s.rebuildBrickNodeLookup()
+		}
+		brickIndex, ok := s.brickNodeLookup[nodeIndex]
+		if !ok {
+			return nil, false
+		}
 		editable := newStagingNode()
+		editable.brickIndex = brickIndex
 		voxelsCopy := *brick.Voxels
 		editable.brickVoxels = &voxelsCopy
 		editable.setBrickLeaf(0)
@@ -351,7 +359,6 @@ func (s *SVO) normalizeEditableNode(node *stagingNode, nodeSize uint) *stagingNo
 			return node
 		}
 		node.tempChildren = [8]*stagingNode{}
-		node.brickIndex = -1
 		node.setBrickLeaf(0)
 		return node
 	}

@@ -1,6 +1,7 @@
 package generators
 
 import (
+	"container/list"
 	"fmt"
 	"math"
 	rand "math/rand/v2"
@@ -9,17 +10,51 @@ import (
 )
 
 const (
-	perlinSceneSize    uint = 768
-	perlinMaxCaveDepth      = 48
+	perlinChunkSize       uint    = 128
+	perlinTerrainScale    float64 = 1024
+	perlinMaxCaveDepth    int     = 48
+	perlinChunkCacheLimit         = 64
 )
 
 type perlinGenerator struct {
-	name      string
-	sceneSize uint
-	seed1     uint64
-	seed2     uint64
-	perm      [512]int
-	cache     *svoSnapshot
+	name          string
+	sceneSize     uint
+	terrainScale  float64
+	seed1         uint64
+	seed2         uint64
+	perm          [512]int
+	chunkCache    map[perlinChunkCacheKey]*list.Element
+	chunkCacheLRU *list.List
+}
+
+type perlinChunkCacheKey struct {
+	chunkX int
+	chunkY int
+}
+
+type perlinCachedCube struct {
+	localX   uint16
+	localY   uint16
+	localZ   uint16
+	cubeSize uint16
+	color    uint32
+}
+
+type perlinCachedBrick struct {
+	localX uint16
+	localY uint16
+	localZ uint16
+	voxels *[world.BrickVoxelCount]uint8
+}
+
+type perlinChunkData struct {
+	cubes  []perlinCachedCube
+	bricks []perlinCachedBrick
+}
+
+type perlinChunkCacheEntry struct {
+	key  perlinChunkCacheKey
+	data perlinChunkData
 }
 
 const (
@@ -45,6 +80,17 @@ var perlinPalette = [255]uint32{
 	rgbaColor(0x4B, 0x7F, 0xB4),
 }
 
+var perlinPaletteColors = []uint32{
+	perlinPalette[perlinDeepVoxel],
+	perlinPalette[perlinRockVoxel],
+	perlinPalette[perlinSoilVoxel],
+	perlinPalette[perlinGrassVoxel],
+	perlinPalette[perlinSandVoxel],
+	perlinPalette[perlinSnowVoxel],
+	perlinPalette[perlinCliffVoxel],
+	perlinPalette[perlinWaterVoxel],
+}
+
 type terrainColumn struct {
 	surface    int
 	seaLevel   int
@@ -64,6 +110,10 @@ type perlinNoiseLayers struct {
 }
 
 func NewPerlinGenerator(seed1, seed2 uint64) *perlinGenerator {
+	return newPerlinGenerator(seed1, seed2, true)
+}
+
+func newPerlinGenerator(seed1, seed2 uint64, enableCache bool) *perlinGenerator {
 	values := make([]int, 256)
 	for index := range values {
 		values[index] = index
@@ -75,7 +125,11 @@ func NewPerlinGenerator(seed1, seed2 uint64) *perlinGenerator {
 		values[index], values[swapIndex] = values[swapIndex], values[index]
 	}
 
-	generator := &perlinGenerator{name: "Perlin Terrain", sceneSize: perlinSceneSize, seed1: seed1, seed2: seed2}
+	generator := &perlinGenerator{name: "Perlin Terrain", sceneSize: perlinChunkSize, terrainScale: perlinTerrainScale, seed1: seed1, seed2: seed2}
+	if enableCache {
+		generator.chunkCache = make(map[perlinChunkCacheKey]*list.Element, perlinChunkCacheLimit)
+		generator.chunkCacheLRU = list.New()
+	}
 	for index := range generator.perm {
 		generator.perm[index] = values[index&255]
 	}
@@ -83,7 +137,7 @@ func NewPerlinGenerator(seed1, seed2 uint64) *perlinGenerator {
 }
 
 func (p *perlinGenerator) variant(seed1Delta, seed2Delta uint64) *perlinGenerator {
-	return NewPerlinGenerator(p.seed1+seed1Delta, p.seed2+seed2Delta)
+	return newPerlinGenerator(p.seed1+seed1Delta, p.seed2+seed2Delta, false)
 }
 
 func (p *perlinGenerator) layers() perlinNoiseLayers {
@@ -101,67 +155,121 @@ func (p *perlinGenerator) Name() string {
 	return p.name
 }
 
-func (p *perlinGenerator) BuildSVO(svo *world.SVO) error {
+func (p *perlinGenerator) CameraDriven() bool {
+	return true
+}
+
+func (p *perlinGenerator) ChunkSize() uint {
+	return p.sceneSize
+}
+
+func (p *perlinGenerator) BuildSVO(svo *world.SVO, request BuildRequest) error {
 	if svo == nil {
 		return fmt.Errorf("svo is required")
 	}
-	if p.cache != nil {
-		return p.cache.restore(svo)
-	}
+	request = request.Normalized()
 
 	layers := p.layers()
-	sceneScale := float64(p.sceneSize)
+	sceneScale := p.terrainScale
+	chunkSize := p.ChunkSize()
+
+	svo.BuildTreeSparseVolumesWithMaterialBricks(request.SceneSize(chunkSize), perlinPaletteColors, func(addCube func(x, y, z, cubeSize uint, color uint32), addBrick func(x, y, z uint, voxels *[world.BrickVoxelCount]uint8)) {
+		request.ForEachChunk(chunkSize, func(chunkX, chunkY int, originX, originY uint) {
+			chunk := p.chunkData(chunkX, chunkY, chunkSize, sceneScale, layers)
+			for _, cube := range chunk.cubes {
+				addCube(originX+uint(cube.localX), originY+uint(cube.localY), uint(cube.localZ), uint(cube.cubeSize), cube.color)
+			}
+			for _, brick := range chunk.bricks {
+				addBrick(originX+uint(brick.localX), originY+uint(brick.localY), uint(brick.localZ), brick.voxels)
+			}
+		})
+	})
+	return nil
+}
+
+func (p *perlinGenerator) chunkData(chunkX, chunkY int, chunkSize uint, sceneScale float64, layers perlinNoiseLayers) perlinChunkData {
+	key := perlinChunkCacheKey{chunkX: chunkX, chunkY: chunkY}
+	if p.chunkCache != nil {
+		if element, ok := p.chunkCache[key]; ok {
+			p.chunkCacheLRU.MoveToBack(element)
+			return element.Value.(*perlinChunkCacheEntry).data
+		}
+	}
+
+	data := p.buildChunkData(chunkX, chunkY, chunkSize, sceneScale, layers)
+	if p.chunkCache == nil || p.chunkCacheLRU == nil {
+		return data
+	}
+
+	entry := &perlinChunkCacheEntry{key: key, data: data}
+	element := p.chunkCacheLRU.PushBack(entry)
+	p.chunkCache[key] = element
+	if p.chunkCacheLRU.Len() > perlinChunkCacheLimit {
+		oldest := p.chunkCacheLRU.Front()
+		if oldest != nil {
+			p.chunkCacheLRU.Remove(oldest)
+			delete(p.chunkCache, oldest.Value.(*perlinChunkCacheEntry).key)
+		}
+	}
+	return data
+}
+
+func (p *perlinGenerator) buildChunkData(chunkX, chunkY int, chunkSize uint, sceneScale float64, layers perlinNoiseLayers) perlinChunkData {
 	brickSize := uint(world.BrickSize)
+	worldChunkX := int64(chunkX) * int64(chunkSize)
+	worldChunkY := int64(chunkY) * int64(chunkSize)
+	data := perlinChunkData{}
+	var blockColumns [world.BrickSize * world.BrickSize]terrainColumn
 
-	svo.BuildTreeSparseVolumes(p.sceneSize, func(addVoxel func(x, y, z uint, color uint32), addCube func(x, y, z, cubeSize uint, color uint32)) {
-		var blockColumns [world.BrickSize * world.BrickSize]terrainColumn
+	for localChunkY := uint(0); localChunkY < chunkSize; localChunkY += brickSize {
+		for localChunkX := uint(0); localChunkX < chunkSize; localChunkX += brickSize {
+			maxColumnTop := 0
+			worldBlockX := worldChunkX + int64(localChunkX)
+			worldBlockY := worldChunkY + int64(localChunkY)
+			for localY := uint(0); localY < brickSize; localY++ {
+				for localX := uint(0); localX < brickSize; localX++ {
+					column := sampleTerrainColumn(
+						float64(worldBlockX+int64(localX)),
+						float64(worldBlockY+int64(localY)),
+						sceneScale,
+						layers.continent,
+						layers.warp,
+						layers.ridge,
+						layers.erosion,
+						layers.biome,
+					)
+					blockColumns[int(localY*brickSize+localX)] = column
 
-		for y0 := uint(0); y0 < p.sceneSize; y0 += brickSize {
-			for x0 := uint(0); x0 < p.sceneSize; x0 += brickSize {
-				maxColumnTop := 0
-				for localY := uint(0); localY < brickSize; localY++ {
-					for localX := uint(0); localX < brickSize; localX++ {
-						column := sampleTerrainColumn(
-							float64(x0+localX),
-							float64(y0+localY),
-							sceneScale,
-							layers.continent,
-							layers.warp,
-							layers.ridge,
-							layers.erosion,
-							layers.biome,
-						)
-						blockColumns[int(localY*brickSize+localX)] = column
-
-						columnTop := column.surface
-						if column.seaLevel > columnTop {
-							columnTop = column.seaLevel
-						}
-						if columnTop > maxColumnTop {
-							maxColumnTop = columnTop
-						}
+					columnTop := column.surface
+					if column.seaLevel > columnTop {
+						columnTop = column.seaLevel
 					}
-				}
-
-				for z0 := uint(0); z0 <= uint(maxColumnTop); z0 += brickSize {
-					if perlinBlockIsUniformWater(blockColumns[:], int(z0)) {
-						addCube(x0, y0, z0, brickSize, perlinPalette[perlinWaterVoxel])
-						continue
+					if columnTop > maxColumnTop {
+						maxColumnTop = columnTop
 					}
-					if perlinBlockIsUniformDeepSolid(blockColumns[:], int(z0)) {
-						addCube(x0, y0, z0, brickSize, perlinPalette[perlinDeepVoxel])
-						continue
-					}
-
-					emitPerlinMixedBlock(addVoxel, x0, y0, z0, sceneScale, blockColumns[:], layers)
 				}
 			}
-		}
-	})
 
-	cache := snapshot(svo)
-	p.cache = &cache
-	return nil
+			for z0 := uint(0); z0 <= uint(maxColumnTop); z0 += brickSize {
+				if perlinBlockIsUniformWater(blockColumns[:], int(z0)) {
+					data.cubes = append(data.cubes, perlinCachedCube{localX: uint16(localChunkX), localY: uint16(localChunkY), localZ: uint16(z0), cubeSize: uint16(brickSize), color: perlinPalette[perlinWaterVoxel]})
+					continue
+				}
+				if perlinBlockIsUniformDeepSolid(blockColumns[:], int(z0)) {
+					data.cubes = append(data.cubes, perlinCachedCube{localX: uint16(localChunkX), localY: uint16(localChunkY), localZ: uint16(z0), cubeSize: uint16(brickSize), color: perlinPalette[perlinDeepVoxel]})
+					continue
+				}
+
+				voxels := buildPerlinMixedBlockMaterials(z0, worldBlockX, worldBlockY, sceneScale, blockColumns[:], layers)
+				if voxels == nil {
+					continue
+				}
+				data.bricks = append(data.bricks, perlinCachedBrick{localX: uint16(localChunkX), localY: uint16(localChunkY), localZ: uint16(z0), voxels: voxels})
+			}
+		}
+	}
+
+	return data
 }
 
 func sampleTerrainColumn(x, y, sceneScale float64, continentNoise, warpNoise, ridgeNoise, erosionNoise, biomeNoise *perlinGenerator) terrainColumn {
@@ -259,33 +367,40 @@ func perlinBlockIsUniformDeepSolid(columns []terrainColumn, blockBaseZ int) bool
 	return true
 }
 
-func emitPerlinMixedBlock(addVoxel func(x, y, z uint, color uint32), baseX, baseY, baseZ uint, sceneScale float64, columns []terrainColumn, layers perlinNoiseLayers) {
+func buildPerlinMixedBlockMaterials(baseZ uint, worldBaseX, worldBaseY int64, sceneScale float64, columns []terrainColumn, layers perlinNoiseLayers) *[world.BrickVoxelCount]uint8 {
+	voxels := &[world.BrickVoxelCount]uint8{}
+	hasMaterial := false
 	for localY := 0; localY < world.BrickSize; localY++ {
 		for localX := 0; localX < world.BrickSize; localX++ {
-			worldX := baseX + uint(localX)
-			worldY := baseY + uint(localY)
+			worldX := worldBaseX + int64(localX)
+			worldY := worldBaseY + int64(localY)
 			column := columns[localY*world.BrickSize+localX]
 
 			for localZ := 0; localZ < world.BrickSize; localZ++ {
 				worldZ := int(baseZ) + localZ
+				materialID := uint8(0)
 				if worldZ > column.surface {
 					if worldZ <= column.seaLevel {
-						addVoxel(worldX, worldY, uint(worldZ), perlinPalette[perlinWaterVoxel])
+						materialID = perlinWaterVoxel
 					}
-					continue
-				}
-
-				if shouldCarveCave(float64(worldX), float64(worldY), float64(worldZ), sceneScale, column, layers.warp, layers.cave) {
+				} else if shouldCarveCave(float64(worldX), float64(worldY), float64(worldZ), sceneScale, column, layers.warp, layers.cave) {
 					if worldZ <= column.seaLevel {
-						addVoxel(worldX, worldY, uint(worldZ), perlinPalette[perlinWaterVoxel])
+						materialID = perlinWaterVoxel
 					}
-					continue
+				} else {
+					materialID = perlinMaterialAtDepth(worldZ, column)
 				}
-
-				addVoxel(worldX, worldY, uint(worldZ), perlinPalette[perlinMaterialAtDepth(worldZ, column)])
+				if materialID != 0 {
+					hasMaterial = true
+				}
+				voxels[localX+localY*world.BrickSize+localZ*world.BrickSize*world.BrickSize] = materialID
 			}
 		}
 	}
+	if !hasMaterial {
+		return nil
+	}
+	return voxels
 }
 
 func shouldCarveCave(x, y, z, sceneScale float64, column terrainColumn, warpNoise, caveNoise *perlinGenerator) bool {

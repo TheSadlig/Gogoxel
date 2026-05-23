@@ -14,8 +14,8 @@ const (
 
 	BrickLeafFlag uint32 = 1 << 31
 
-	childMaskMask    uint32 = 0xFF
-	storageWordCount        = 2
+	childMaskMask    = uint32(0xFF)
+	storageWordCount = 2
 )
 
 type Brick struct {
@@ -150,6 +150,37 @@ func (s *SVO) BuildTreeSparseFunc(size uint, emit func(add func(x, y, z uint, co
 }
 
 func (s *SVO) BuildTreeSparseVolumes(size uint, emit func(addVoxel func(x, y, z uint, color uint32), addCube func(x, y, z, cubeSize uint, color uint32))) {
+	s.buildTreeSparseVolumes(size, func(addVoxel func(x, y, z uint, color uint32), addCube func(x, y, z, cubeSize uint, color uint32), _ func(x, y, z uint, colors *[BrickVoxelCount]uint32)) {
+		if emit != nil {
+			emit(addVoxel, addCube)
+		}
+	})
+}
+
+func (s *SVO) BuildTreeSparseVolumesWithBricks(size uint, emit func(addVoxel func(x, y, z uint, color uint32), addCube func(x, y, z, cubeSize uint, color uint32), addBrick func(x, y, z uint, colors *[BrickVoxelCount]uint32))) {
+	s.buildTreeSparseVolumes(size, emit)
+}
+
+func (s *SVO) BuildTreeSparseVolumesWithMaterialBricks(size uint, paletteColors []uint32, emit func(addCube func(x, y, z, cubeSize uint, color uint32), addBrick func(x, y, z uint, voxels *[BrickVoxelCount]uint8))) {
+	s.beginBuild(size)
+	s.ensurePaletteColors(paletteColors)
+
+	var root *stagingNode
+	if emit != nil {
+		emit(
+			func(x, y, z, cubeSize uint, color uint32) {
+				s.addVolumeCube(&root, x, y, z, cubeSize, color)
+			},
+			func(x, y, z uint, voxels *[BrickVoxelCount]uint8) {
+				s.addVolumeBrickMaterials(&root, x, y, z, voxels)
+			},
+		)
+	}
+
+	s.finishSparseVolumeBuild(root)
+}
+
+func (s *SVO) buildTreeSparseVolumes(size uint, emit func(addVoxel func(x, y, z uint, color uint32), addCube func(x, y, z, cubeSize uint, color uint32), addBrick func(x, y, z uint, colors *[BrickVoxelCount]uint32))) {
 	s.beginBuild(size)
 
 	var root *stagingNode
@@ -161,9 +192,16 @@ func (s *SVO) BuildTreeSparseVolumes(size uint, emit func(addVoxel func(x, y, z 
 			func(x, y, z, cubeSize uint, color uint32) {
 				s.addVolumeCube(&root, x, y, z, cubeSize, color)
 			},
+			func(x, y, z uint, colors *[BrickVoxelCount]uint32) {
+				s.addVolumeBrickColors(&root, x, y, z, colors)
+			},
 		)
 	}
 
+	s.finishSparseVolumeBuild(root)
+}
+
+func (s *SVO) finishSparseVolumeBuild(root *stagingNode) {
 	if root == nil {
 		s.nodes = make([]SvoNode, 1)
 		s.rebuildStorageWords()
@@ -179,8 +217,10 @@ func (s *SVO) BuildTreeSparseVolumes(size uint, emit func(addVoxel func(x, y, z 
 		s.fillBrickJobsParallel(brickJobs)
 	}
 	s.nodes = s.nodes[:0]
-	s.editableRoot = root
 	s.flattenTree(root)
+	// Keep the editable staging tree lazy after generation; large generated
+	// scenes otherwise retain both the flat SVO and the full edit tree in RAM.
+	s.editableRoot = nil
 	s.colorToMaterial = nil
 	s.rebuildBrickNodeLookup()
 	s.rebuildStorageWords()
@@ -392,6 +432,18 @@ func (s *SVO) materialForColor(color uint32) uint8 {
 	return bestMaterialID
 }
 
+func (s *SVO) ensurePaletteColors(colors []uint32) {
+	if s == nil {
+		return
+	}
+	for _, color := range colors {
+		if color == 0 {
+			continue
+		}
+		s.materialForColor(color)
+	}
+}
+
 func paletteColorDistance(a, b uint32) int {
 	redA, greenA, blueA := packedColorRGB(a)
 	redB, greenB, blueB := packedColorRGB(b)
@@ -499,6 +551,104 @@ func (s *SVO) addVolumeCube(root **stagingNode, x, y, z, cubeSize uint, color ui
 	s.extendOccupiedBounds(x, y, z, cubeSize)
 }
 
+func (s *SVO) addVolumeBrickColors(root **stagingNode, x, y, z uint, colors *[BrickVoxelCount]uint32) {
+	if colors == nil {
+		return
+	}
+	brickSize := uint(BrickSize)
+	if x+brickSize > s.size || y+brickSize > s.size || z+brickSize > s.size {
+		return
+	}
+	if x%brickSize != 0 || y%brickSize != 0 || z%brickSize != 0 {
+		return
+	}
+
+	uniformColor := colors[0]
+	uniform := true
+	hasMaterial := false
+	voxels := &[BrickVoxelCount]uint8{}
+	for index, color := range colors {
+		if color != uniformColor {
+			uniform = false
+		}
+		if color == 0 {
+			continue
+		}
+		hasMaterial = true
+		voxels[index] = s.materialForColor(color)
+	}
+	if !hasMaterial {
+		return
+	}
+	if uniform && uniformColor != 0 {
+		s.addVolumeCube(root, x, y, z, brickSize, uniformColor)
+		return
+	}
+
+	if *root == nil {
+		*root = newStagingNode()
+	}
+	brickIndex := len(s.bricks)
+	s.bricks = append(s.bricks, Brick{
+		Origin: [3]uint32{uint32(x), uint32(y), uint32(z)},
+		Voxels: voxels,
+	})
+	s.insertVolumeBrick(*root, 0, 0, 0, s.size, x, y, z, brickIndex, voxels)
+	s.extendOccupiedBounds(x, y, z, brickSize)
+}
+
+func (s *SVO) addVolumeBrickMaterials(root **stagingNode, x, y, z uint, voxels *[BrickVoxelCount]uint8) {
+	if voxels == nil {
+		return
+	}
+	brickSize := uint(BrickSize)
+	if x+brickSize > s.size || y+brickSize > s.size || z+brickSize > s.size {
+		return
+	}
+	if x%brickSize != 0 || y%brickSize != 0 || z%brickSize != 0 {
+		return
+	}
+
+	uniformMaterialID := uint8(0)
+	hasMaterial := false
+	uniform := true
+	for _, materialID := range voxels[:] {
+		if materialID == 0 {
+			uniform = false
+			continue
+		}
+		if !hasMaterial {
+			uniformMaterialID = materialID
+			hasMaterial = true
+			continue
+		}
+		if materialID != uniformMaterialID {
+			uniform = false
+			break
+		}
+	}
+	if !hasMaterial {
+		return
+	}
+	if uniform {
+		if color := s.palette[uniformMaterialID]; color != 0 {
+			s.addVolumeCube(root, x, y, z, brickSize, color)
+			return
+		}
+	}
+
+	if *root == nil {
+		*root = newStagingNode()
+	}
+	brickIndex := len(s.bricks)
+	s.bricks = append(s.bricks, Brick{
+		Origin: [3]uint32{uint32(x), uint32(y), uint32(z)},
+		Voxels: voxels,
+	})
+	s.insertVolumeBrick(*root, 0, 0, 0, s.size, x, y, z, brickIndex, voxels)
+	s.extendOccupiedBounds(x, y, z, brickSize)
+}
+
 func (s *SVO) insertVolumeCube(node *stagingNode, originX, originY, originZ, nodeSize, cubeX, cubeY, cubeZ, cubeSize uint, materialID uint8) {
 	if node == nil || cubeSize == 0 || cubeSize > nodeSize {
 		return
@@ -540,8 +690,50 @@ func (s *SVO) insertVolumeCube(node *stagingNode, originX, originY, originZ, nod
 	s.insertVolumeCube(child, childOriginX, childOriginY, childOriginZ, halfSize, cubeX, cubeY, cubeZ, cubeSize, materialID)
 }
 
+func (s *SVO) insertVolumeBrick(node *stagingNode, originX, originY, originZ, nodeSize, brickX, brickY, brickZ uint, brickIndex int, voxels *[BrickVoxelCount]uint8) {
+	if node == nil || voxels == nil || nodeSize < BrickSize {
+		return
+	}
+	if nodeSize == BrickSize {
+		node.tempChildren = [8]*stagingNode{}
+		node.brickVoxels = voxels
+		node.brickIndex = brickIndex
+		node.setBrickLeaf(0)
+		return
+	}
+
+	halfSize := nodeSize >> 1
+	if halfSize == 0 {
+		return
+	}
+
+	octant := 0
+	childOriginX := originX
+	childOriginY := originY
+	childOriginZ := originZ
+	if brickX >= originX+halfSize {
+		octant |= 1
+		childOriginX += halfSize
+	}
+	if brickY >= originY+halfSize {
+		octant |= 2
+		childOriginY += halfSize
+	}
+	if brickZ >= originZ+halfSize {
+		octant |= 4
+		childOriginZ += halfSize
+	}
+
+	child := node.tempChildren[octant]
+	if child == nil {
+		child = newStagingNode()
+		node.tempChildren[octant] = child
+	}
+	s.insertVolumeBrick(child, childOriginX, childOriginY, childOriginZ, halfSize, brickX, brickY, brickZ, brickIndex, voxels)
+}
+
 func (s *SVO) compactSparseVolume(node *stagingNode, nodeSize, originX, originY, originZ uint, brickJobs *[]*stagingNode) {
-	if node == nil || node.isSolidLeaf() {
+	if node == nil || node.isSolidLeaf() || node.isBrickLeaf() {
 		return
 	}
 
@@ -666,8 +858,8 @@ func (s *SVO) buildFromLeafLayer(leafLayer map[uint64]*stagingNode) {
 	}
 
 	s.nodes = make([]SvoNode, 0)
-	s.editableRoot = root
 	s.flattenTree(root)
+	s.editableRoot = nil
 	s.rebuildBrickNodeLookup()
 }
 

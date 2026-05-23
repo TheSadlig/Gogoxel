@@ -31,10 +31,20 @@ func (h *Host) Reset(ctx context.Context) error {
 	return err
 }
 
-func (h *Host) LoadGenerator(ctx context.Context, name string) error {
+func (h *Host) LoadGenerator(ctx context.Context, request session.GeneratorLoadRequest) error {
 	_, err := h.invoke(ctx, func(_ context.Context, state *sessionState) (any, error) {
-		state.trace.recordCommand("load_generator", map[string]any{"name": name})
-		return nil, state.game.LoadGenerator(name)
+		state.trace.recordCommand("load_generator", map[string]any{
+			"name":        request.Name,
+			"chunk_x":     request.ChunkX,
+			"chunk_y":     request.ChunkY,
+			"chunk_range": request.ChunkRange,
+		})
+		return nil, state.game.LoadGeneratorAt(engine.GeneratorLoadRequest{
+			Name:       request.Name,
+			ChunkX:     request.ChunkX,
+			ChunkY:     request.ChunkY,
+			ChunkRange: request.ChunkRange,
+		})
 	})
 	return err
 }

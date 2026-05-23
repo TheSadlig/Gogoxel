@@ -27,6 +27,7 @@ type MetricsSnapshot struct {
 	Camera                       platform.Camera
 	CurrentGenerator             string
 	RAMBytes                     uint64
+	SystemRAMBytes               uint64
 	VRAMBytes                    uint64
 	ChunkRAMBytes                uint64
 	NodeCount                    int
@@ -77,10 +78,17 @@ type StepResult struct {
 	Metrics MetricsSnapshot
 }
 
+type GeneratorLoadRequest struct {
+	Name       string
+	ChunkX     int
+	ChunkY     int
+	ChunkRange int
+}
+
 type AutomationSession interface {
 	GetReadiness(context.Context) (Readiness, error)
 	Reset(context.Context) error
-	LoadGenerator(context.Context, string) error
+	LoadGenerator(context.Context, GeneratorLoadRequest) error
 	SetCamera(context.Context, platform.Camera) error
 	SetTickRate(context.Context, int) error
 	GetCamera(context.Context) (platform.Camera, error)

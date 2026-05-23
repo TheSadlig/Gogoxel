@@ -66,17 +66,25 @@ func (c *GeneratorCatalog) NextName(current string) string {
 	return c.order[0]
 }
 
-func (c *GeneratorCatalog) Build(name string) (*world.SVO, error) {
+func (c *GeneratorCatalog) Lookup(name string) (generators.Generator, bool) {
 	if c == nil {
-		return nil, fmt.Errorf("generator catalog is not initialized")
+		return nil, false
+	}
+	item, ok := c.byName[name]
+	return item, ok
+}
+
+func (c *GeneratorCatalog) Build(name string, request generators.BuildRequest) (*world.SVO, uint, error) {
+	if c == nil {
+		return nil, 0, fmt.Errorf("generator catalog is not initialized")
 	}
 	item, ok := c.byName[name]
 	if !ok {
-		return nil, fmt.Errorf("unknown generator %q", name)
+		return nil, 0, fmt.Errorf("unknown generator %q", name)
 	}
 	svo := world.NewSVO()
-	if err := item.BuildSVO(svo); err != nil {
-		return nil, fmt.Errorf("building generator %q: %w", name, err)
+	if err := item.BuildSVO(svo, request); err != nil {
+		return nil, 0, fmt.Errorf("building generator %q: %w", name, err)
 	}
-	return svo, nil
+	return svo, item.ChunkSize(), nil
 }

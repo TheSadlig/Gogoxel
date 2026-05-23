@@ -58,6 +58,7 @@ func (r *traceRecorder) recordFrame(sample time.Duration, metrics session.Metric
 		"average_frame_time_ms":     metrics.AverageFrameTimeMs,
 		"p95_frame_time_ms":         metrics.P95FrameTimeMs,
 		"ram_bytes":                 metrics.RAMBytes,
+		"system_ram_bytes":          metrics.SystemRAMBytes,
 		"vram_bytes":                metrics.VRAMBytes,
 		"current_generator":         metrics.CurrentGenerator,
 		"resident_brick_count":      metrics.ResidentBrickCount,

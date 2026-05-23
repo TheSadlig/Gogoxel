@@ -22,19 +22,19 @@ type Options struct {
 }
 
 type Game struct {
-	options  Options
-	window   *platform.Window
-	renderer *vulkan.Renderer
-	core     *engine.Core
+	options             Options
+	window              *platform.Window
+	renderer            *vulkan.Renderer
+	core                *engine.Core
 	externalHeldActions input.Snapshot
-	requestedClose bool
+	requestedClose      bool
 
-	fpsFrames  int
-	fpsElapsed time.Duration
-	lastFPS    float64
-	chunk      *vulkan.ChunkResources
-	bindings   *vulkan.ChunkBindings
-	raytracer  *vulkan.RaytracerPipeline
+	fpsFrames          int
+	fpsElapsed         time.Duration
+	lastFPS            float64
+	chunk              *vulkan.ChunkResources
+	bindings           *vulkan.ChunkBindings
+	raytracer          *vulkan.RaytracerPipeline
 	loadedSceneVersion uint64
 }
 
@@ -158,7 +158,7 @@ func (g *Game) InitChunk() error {
 		return fmt.Errorf("no scene is loaded")
 	}
 
-	nextChunk, err := g.renderer.CreateChunkResourcesFromSVO(g.bindings, currentSVO)
+	nextChunk, err := g.renderer.CreateChunkResourcesFromSVO(g.bindings, currentSVO, g.core.SceneWorldOrigin())
 	if err != nil {
 		return fmt.Errorf("creating chunk resources from svo: %w", err)
 	}
@@ -174,7 +174,7 @@ func (g *Game) InitChunk() error {
 		previousChunk.Close()
 	}
 	g.loadedSceneVersion = g.core.SceneVersion()
-	g.chunk.SetCameraPosition(g.core.Camera().Position)
+	g.chunk.SetCamera(g.core.Camera())
 	g.updateWindowTitle()
 
 	return nil
@@ -281,7 +281,11 @@ func (g *Game) Reset() error {
 }
 
 func (g *Game) LoadGenerator(name string) error {
-	if err := g.core.LoadGenerator(name); err != nil {
+	return g.LoadGeneratorAt(engine.GeneratorLoadRequest{Name: name})
+}
+
+func (g *Game) LoadGeneratorAt(request engine.GeneratorLoadRequest) error {
+	if err := g.core.LoadGeneratorAt(request); err != nil {
 		return err
 	}
 	if g.renderer != nil {
@@ -426,7 +430,7 @@ func (g *Game) Update(delta time.Duration) error {
 			g.loadedSceneVersion = g.core.SceneVersion()
 			return nil
 		}
-		if g.chunk != nil && g.chunk.QueueSceneUpdate(g.core.CurrentSVO()) {
+		if g.chunk != nil && g.chunk.QueueSceneUpdate(g.core.CurrentSVO(), g.core.SceneWorldOrigin()) {
 			g.loadedSceneVersion = g.core.SceneVersion()
 			return nil
 		}
@@ -470,7 +474,12 @@ func (g *Game) updateWindowTitle() {
 	if snapshot := g.core.Snapshot(); snapshot.SceneLoaded {
 		title = fmt.Sprintf("%s | SVO %d nodes", title, snapshot.NodeCount)
 	}
+	if memory := currentProcessMemoryStats(); memory.SystemBytes > 0 {
+		title = fmt.Sprintf("%s | SYS %s", title, formatBytes(memory.SystemBytes))
+	}
 	if g.chunk != nil {
+		streaming := g.chunk.StreamingStats()
+		title = fmt.Sprintf("%s | STR %dp @%d", title, streaming.PendingDesiredCount, streaming.UploadBudget)
 		title = fmt.Sprintf("%s | GPU %s", title, formatBytes(g.chunk.GPUBytes()))
 	}
 	g.window.SetTitle(title)
@@ -504,7 +513,7 @@ func (g *Game) Render(frame *vulkan.Frame) error {
 		return fmt.Errorf("recording scene update: %w", err)
 	}
 	camera := g.core.Camera()
-	g.chunk.SetCameraPosition(camera.Position)
+	g.chunk.SetCamera(camera)
 	if err := g.chunk.RecordStreaming(frame); err != nil {
 		return fmt.Errorf("recording brick streaming uploads: %w", err)
 	}
@@ -528,22 +537,22 @@ func (g *Game) currentGeneratorName() string {
 
 func defaultKeyBindings() map[input.Action]glfw.Key {
 	return map[input.Action]glfw.Key{
-		control.ActionMoveForward:  glfw.KeyW,
-		control.ActionMoveBackward: glfw.KeyS,
-		control.ActionMoveLeft:     glfw.KeyA,
-		control.ActionMoveRight:    glfw.KeyD,
-		control.ActionYawDown:      glfw.KeyLeft,
-		control.ActionYawUp:        glfw.KeyRight,
-		control.ActionTurnRight:    glfw.KeyDown,
-		control.ActionTurnLeft:     glfw.KeyUp,
-		control.ActionMoveAway:     glfw.KeyKPAdd,
-		control.ActionMoveCloser:   glfw.KeyKPSubtract,
-		control.ActionMoveUp:       glfw.KeyQ,
-		control.ActionMoveDown:     glfw.KeyE,
-		control.ActionFaster:       glfw.KeyLeftShift,
-		control.ActionNextModel:    glfw.KeyF1,
+		control.ActionMoveForward:      glfw.KeyW,
+		control.ActionMoveBackward:     glfw.KeyS,
+		control.ActionMoveLeft:         glfw.KeyA,
+		control.ActionMoveRight:        glfw.KeyD,
+		control.ActionYawDown:          glfw.KeyLeft,
+		control.ActionYawUp:            glfw.KeyRight,
+		control.ActionTurnRight:        glfw.KeyDown,
+		control.ActionTurnLeft:         glfw.KeyUp,
+		control.ActionMoveAway:         glfw.KeyKPAdd,
+		control.ActionMoveCloser:       glfw.KeyKPSubtract,
+		control.ActionMoveUp:           glfw.KeyQ,
+		control.ActionMoveDown:         glfw.KeyE,
+		control.ActionFaster:           glfw.KeyLeftShift,
+		control.ActionNextModel:        glfw.KeyF1,
 		control.ActionPreviousMaterial: glfw.KeyLeftBracket,
-		control.ActionNextMaterial: glfw.KeyRightBracket,
+		control.ActionNextMaterial:     glfw.KeyRightBracket,
 	}
 }
 
@@ -571,9 +580,9 @@ func mouseSnapshot(source *platform.Window) input.Snapshot {
 
 func cursorSample(source *platform.Window) engine.CursorSample {
 	sample := engine.CursorSample{
-		NormalizedX:   0.5,
-		NormalizedY:   0.5,
-		ViewportWidth: vulkan.DefaultWindowWidth,
+		NormalizedX:    0.5,
+		NormalizedY:    0.5,
+		ViewportWidth:  vulkan.DefaultWindowWidth,
 		ViewportHeight: vulkan.DefaultWindowHeight,
 	}
 	if source == nil {

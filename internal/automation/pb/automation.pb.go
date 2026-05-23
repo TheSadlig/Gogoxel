@@ -432,22 +432,23 @@ type MetricsSnapshot struct {
 	Camera                       *Camera                `protobuf:"bytes,1,opt,name=camera,proto3" json:"camera,omitempty"`
 	CurrentGenerator             string                 `protobuf:"bytes,2,opt,name=current_generator,json=currentGenerator,proto3" json:"current_generator,omitempty"`
 	RamBytes                     uint64                 `protobuf:"varint,3,opt,name=ram_bytes,json=ramBytes,proto3" json:"ram_bytes,omitempty"`
-	VramBytes                    uint64                 `protobuf:"varint,4,opt,name=vram_bytes,json=vramBytes,proto3" json:"vram_bytes,omitempty"`
-	ChunkRamBytes                uint64                 `protobuf:"varint,5,opt,name=chunk_ram_bytes,json=chunkRamBytes,proto3" json:"chunk_ram_bytes,omitempty"`
-	NodeCount                    uint64                 `protobuf:"varint,6,opt,name=node_count,json=nodeCount,proto3" json:"node_count,omitempty"`
-	BrickCount                   uint64                 `protobuf:"varint,7,opt,name=brick_count,json=brickCount,proto3" json:"brick_count,omitempty"`
-	WorldSize                    uint64                 `protobuf:"varint,8,opt,name=world_size,json=worldSize,proto3" json:"world_size,omitempty"`
-	ResidentBrickCount           uint64                 `protobuf:"varint,9,opt,name=resident_brick_count,json=residentBrickCount,proto3" json:"resident_brick_count,omitempty"`
-	StreamingDesiredReady        bool                   `protobuf:"varint,10,opt,name=streaming_desired_ready,json=streamingDesiredReady,proto3" json:"streaming_desired_ready,omitempty"`
-	StreamingPendingDesiredCount uint64                 `protobuf:"varint,11,opt,name=streaming_pending_desired_count,json=streamingPendingDesiredCount,proto3" json:"streaming_pending_desired_count,omitempty"`
-	StreamingResidentLimit       uint64                 `protobuf:"varint,12,opt,name=streaming_resident_limit,json=streamingResidentLimit,proto3" json:"streaming_resident_limit,omitempty"`
-	StreamingUploadBudget        uint64                 `protobuf:"varint,13,opt,name=streaming_upload_budget,json=streamingUploadBudget,proto3" json:"streaming_upload_budget,omitempty"`
-	PresentMode                  string                 `protobuf:"bytes,14,opt,name=present_mode,json=presentMode,proto3" json:"present_mode,omitempty"`
-	RendererDevice               string                 `protobuf:"bytes,15,opt,name=renderer_device,json=rendererDevice,proto3" json:"renderer_device,omitempty"`
-	AverageFps                   float64                `protobuf:"fixed64,16,opt,name=average_fps,json=averageFps,proto3" json:"average_fps,omitempty"`
-	AverageFrameTimeMs           float64                `protobuf:"fixed64,17,opt,name=average_frame_time_ms,json=averageFrameTimeMs,proto3" json:"average_frame_time_ms,omitempty"`
-	P95FrameTimeMs               float64                `protobuf:"fixed64,18,opt,name=p95_frame_time_ms,json=p95FrameTimeMs,proto3" json:"p95_frame_time_ms,omitempty"`
-	FrameSampleCount             uint64                 `protobuf:"varint,19,opt,name=frame_sample_count,json=frameSampleCount,proto3" json:"frame_sample_count,omitempty"`
+	SystemRamBytes               uint64                 `protobuf:"varint,4,opt,name=system_ram_bytes,json=systemRamBytes,proto3" json:"system_ram_bytes,omitempty"`
+	VramBytes                    uint64                 `protobuf:"varint,5,opt,name=vram_bytes,json=vramBytes,proto3" json:"vram_bytes,omitempty"`
+	ChunkRamBytes                uint64                 `protobuf:"varint,6,opt,name=chunk_ram_bytes,json=chunkRamBytes,proto3" json:"chunk_ram_bytes,omitempty"`
+	NodeCount                    uint64                 `protobuf:"varint,7,opt,name=node_count,json=nodeCount,proto3" json:"node_count,omitempty"`
+	BrickCount                   uint64                 `protobuf:"varint,8,opt,name=brick_count,json=brickCount,proto3" json:"brick_count,omitempty"`
+	WorldSize                    uint64                 `protobuf:"varint,9,opt,name=world_size,json=worldSize,proto3" json:"world_size,omitempty"`
+	ResidentBrickCount           uint64                 `protobuf:"varint,10,opt,name=resident_brick_count,json=residentBrickCount,proto3" json:"resident_brick_count,omitempty"`
+	StreamingDesiredReady        bool                   `protobuf:"varint,11,opt,name=streaming_desired_ready,json=streamingDesiredReady,proto3" json:"streaming_desired_ready,omitempty"`
+	StreamingPendingDesiredCount uint64                 `protobuf:"varint,12,opt,name=streaming_pending_desired_count,json=streamingPendingDesiredCount,proto3" json:"streaming_pending_desired_count,omitempty"`
+	StreamingResidentLimit       uint64                 `protobuf:"varint,13,opt,name=streaming_resident_limit,json=streamingResidentLimit,proto3" json:"streaming_resident_limit,omitempty"`
+	StreamingUploadBudget        uint64                 `protobuf:"varint,14,opt,name=streaming_upload_budget,json=streamingUploadBudget,proto3" json:"streaming_upload_budget,omitempty"`
+	PresentMode                  string                 `protobuf:"bytes,15,opt,name=present_mode,json=presentMode,proto3" json:"present_mode,omitempty"`
+	RendererDevice               string                 `protobuf:"bytes,16,opt,name=renderer_device,json=rendererDevice,proto3" json:"renderer_device,omitempty"`
+	AverageFps                   float64                `protobuf:"fixed64,17,opt,name=average_fps,json=averageFps,proto3" json:"average_fps,omitempty"`
+	AverageFrameTimeMs           float64                `protobuf:"fixed64,18,opt,name=average_frame_time_ms,json=averageFrameTimeMs,proto3" json:"average_frame_time_ms,omitempty"`
+	P95FrameTimeMs               float64                `protobuf:"fixed64,19,opt,name=p95_frame_time_ms,json=p95FrameTimeMs,proto3" json:"p95_frame_time_ms,omitempty"`
+	FrameSampleCount             uint64                 `protobuf:"varint,20,opt,name=frame_sample_count,json=frameSampleCount,proto3" json:"frame_sample_count,omitempty"`
 	unknownFields                protoimpl.UnknownFields
 	sizeCache                    protoimpl.SizeCache
 }
@@ -499,6 +500,13 @@ func (x *MetricsSnapshot) GetCurrentGenerator() string {
 func (x *MetricsSnapshot) GetRamBytes() uint64 {
 	if x != nil {
 		return x.RamBytes
+	}
+	return 0
+}
+
+func (x *MetricsSnapshot) GetSystemRamBytes() uint64 {
+	if x != nil {
+		return x.SystemRamBytes
 	}
 	return 0
 }
@@ -974,6 +982,9 @@ func (x *ResetEngineResponse) GetReadiness() *Readiness {
 type LoadGeneratorRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	ChunkX        int32                  `protobuf:"varint,2,opt,name=chunk_x,json=chunkX,proto3" json:"chunk_x,omitempty"`
+	ChunkY        int32                  `protobuf:"varint,3,opt,name=chunk_y,json=chunkY,proto3" json:"chunk_y,omitempty"`
+	ChunkRange    uint32                 `protobuf:"varint,4,opt,name=chunk_range,json=chunkRange,proto3" json:"chunk_range,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1013,6 +1024,27 @@ func (x *LoadGeneratorRequest) GetName() string {
 		return x.Name
 	}
 	return ""
+}
+
+func (x *LoadGeneratorRequest) GetChunkX() int32 {
+	if x != nil {
+		return x.ChunkX
+	}
+	return 0
+}
+
+func (x *LoadGeneratorRequest) GetChunkY() int32 {
+	if x != nil {
+		return x.ChunkY
+	}
+	return 0
+}
+
+func (x *LoadGeneratorRequest) GetChunkRange() uint32 {
+	if x != nil {
+		return x.ChunkRange
+	}
+	return 0
 }
 
 type LoadGeneratorResponse struct {
@@ -2212,33 +2244,34 @@ const file_gogoxel_automation_v1_automation_proto_rawDesc = "" +
 	"\x10require_renderer\x18\x01 \x01(\bR\x0frequireRenderer\x120\n" +
 	"\x14require_scene_loaded\x18\x02 \x01(\bR\x12requireSceneLoaded\x12:\n" +
 	"\x19require_streaming_settled\x18\x03 \x01(\bR\x17requireStreamingSettled\x12\x1b\n" +
-	"\tmax_ticks\x18\x04 \x01(\rR\bmaxTicks\"\xd4\x06\n" +
+	"\tmax_ticks\x18\x04 \x01(\rR\bmaxTicks\"\xfe\x06\n" +
 	"\x0fMetricsSnapshot\x125\n" +
 	"\x06camera\x18\x01 \x01(\v2\x1d.gogoxel.automation.v1.CameraR\x06camera\x12+\n" +
 	"\x11current_generator\x18\x02 \x01(\tR\x10currentGenerator\x12\x1b\n" +
-	"\tram_bytes\x18\x03 \x01(\x04R\bramBytes\x12\x1d\n" +
+	"\tram_bytes\x18\x03 \x01(\x04R\bramBytes\x12(\n" +
+	"\x10system_ram_bytes\x18\x04 \x01(\x04R\x0esystemRamBytes\x12\x1d\n" +
 	"\n" +
-	"vram_bytes\x18\x04 \x01(\x04R\tvramBytes\x12&\n" +
-	"\x0fchunk_ram_bytes\x18\x05 \x01(\x04R\rchunkRamBytes\x12\x1d\n" +
+	"vram_bytes\x18\x05 \x01(\x04R\tvramBytes\x12&\n" +
+	"\x0fchunk_ram_bytes\x18\x06 \x01(\x04R\rchunkRamBytes\x12\x1d\n" +
 	"\n" +
-	"node_count\x18\x06 \x01(\x04R\tnodeCount\x12\x1f\n" +
-	"\vbrick_count\x18\a \x01(\x04R\n" +
+	"node_count\x18\a \x01(\x04R\tnodeCount\x12\x1f\n" +
+	"\vbrick_count\x18\b \x01(\x04R\n" +
 	"brickCount\x12\x1d\n" +
 	"\n" +
-	"world_size\x18\b \x01(\x04R\tworldSize\x120\n" +
-	"\x14resident_brick_count\x18\t \x01(\x04R\x12residentBrickCount\x126\n" +
-	"\x17streaming_desired_ready\x18\n" +
-	" \x01(\bR\x15streamingDesiredReady\x12E\n" +
-	"\x1fstreaming_pending_desired_count\x18\v \x01(\x04R\x1cstreamingPendingDesiredCount\x128\n" +
-	"\x18streaming_resident_limit\x18\f \x01(\x04R\x16streamingResidentLimit\x126\n" +
-	"\x17streaming_upload_budget\x18\r \x01(\x04R\x15streamingUploadBudget\x12!\n" +
-	"\fpresent_mode\x18\x0e \x01(\tR\vpresentMode\x12'\n" +
-	"\x0frenderer_device\x18\x0f \x01(\tR\x0erendererDevice\x12\x1f\n" +
-	"\vaverage_fps\x18\x10 \x01(\x01R\n" +
+	"world_size\x18\t \x01(\x04R\tworldSize\x120\n" +
+	"\x14resident_brick_count\x18\n" +
+	" \x01(\x04R\x12residentBrickCount\x126\n" +
+	"\x17streaming_desired_ready\x18\v \x01(\bR\x15streamingDesiredReady\x12E\n" +
+	"\x1fstreaming_pending_desired_count\x18\f \x01(\x04R\x1cstreamingPendingDesiredCount\x128\n" +
+	"\x18streaming_resident_limit\x18\r \x01(\x04R\x16streamingResidentLimit\x126\n" +
+	"\x17streaming_upload_budget\x18\x0e \x01(\x04R\x15streamingUploadBudget\x12!\n" +
+	"\fpresent_mode\x18\x0f \x01(\tR\vpresentMode\x12'\n" +
+	"\x0frenderer_device\x18\x10 \x01(\tR\x0erendererDevice\x12\x1f\n" +
+	"\vaverage_fps\x18\x11 \x01(\x01R\n" +
 	"averageFps\x121\n" +
-	"\x15average_frame_time_ms\x18\x11 \x01(\x01R\x12averageFrameTimeMs\x12)\n" +
-	"\x11p95_frame_time_ms\x18\x12 \x01(\x01R\x0ep95FrameTimeMs\x12,\n" +
-	"\x12frame_sample_count\x18\x13 \x01(\x04R\x10frameSampleCount\"q\n" +
+	"\x15average_frame_time_ms\x18\x12 \x01(\x01R\x12averageFrameTimeMs\x12)\n" +
+	"\x11p95_frame_time_ms\x18\x13 \x01(\x01R\x0ep95FrameTimeMs\x12,\n" +
+	"\x12frame_sample_count\x18\x14 \x01(\x04R\x10frameSampleCount\"q\n" +
 	"\bArtifact\x12\x12\n" +
 	"\x04kind\x18\x01 \x01(\tR\x04kind\x12%\n" +
 	"\x0erequested_name\x18\x02 \x01(\tR\rrequestedName\x12\x12\n" +
@@ -2258,9 +2291,13 @@ const file_gogoxel_automation_v1_automation_proto_rawDesc = "" +
 	"\x12GetMetricsResponse\x12@\n" +
 	"\ametrics\x18\x01 \x01(\v2&.gogoxel.automation.v1.MetricsSnapshotR\ametrics\"U\n" +
 	"\x13ResetEngineResponse\x12>\n" +
-	"\treadiness\x18\x01 \x01(\v2 .gogoxel.automation.v1.ReadinessR\treadiness\"*\n" +
+	"\treadiness\x18\x01 \x01(\v2 .gogoxel.automation.v1.ReadinessR\treadiness\"}\n" +
 	"\x14LoadGeneratorRequest\x12\x12\n" +
-	"\x04name\x18\x01 \x01(\tR\x04name\"W\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x17\n" +
+	"\achunk_x\x18\x02 \x01(\x05R\x06chunkX\x12\x17\n" +
+	"\achunk_y\x18\x03 \x01(\x05R\x06chunkY\x12\x1f\n" +
+	"\vchunk_range\x18\x04 \x01(\rR\n" +
+	"chunkRange\"W\n" +
 	"\x15LoadGeneratorResponse\x12>\n" +
 	"\treadiness\x18\x01 \x01(\v2 .gogoxel.automation.v1.ReadinessR\treadiness\"I\n" +
 	"\x10SetCameraRequest\x125\n" +

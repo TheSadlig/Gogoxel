@@ -33,7 +33,7 @@ import (
 
 type automationDriver interface {
 	Reset(context.Context) error
-	LoadGenerator(context.Context, string) error
+	LoadGenerator(context.Context, session.GeneratorLoadRequest) error
 	SetTickRate(context.Context, int) error
 	SetCamera(context.Context, platform.Camera) error
 	GetCamera(context.Context) (platform.Camera, error)
@@ -365,7 +365,7 @@ func (h *scenarioHarness) setTickRate(rate int) error {
 func (h *scenarioHarness) loadGenerator(name string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), generatorLoadTimeout)
 	defer cancel()
-	return h.driver.LoadGenerator(ctx, name)
+	return h.driver.LoadGenerator(ctx, session.GeneratorLoadRequest{Name: name})
 }
 
 func (h *scenarioHarness) setCamera(x, y, z, yaw, pitch, fov float64) error {

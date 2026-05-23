@@ -11,7 +11,7 @@ type cubeGenerator struct {
 	sceneSize uint
 	cubeSize  uint
 	color     uint32
-	cache     *svoSnapshot
+	cache     snapshotCache
 }
 
 func NewCubeGenerator(name string, sceneSize, cubeSize uint, color uint32) Generator {
@@ -31,30 +31,37 @@ func (g *cubeGenerator) Name() string {
 	return g.name
 }
 
-func (g *cubeGenerator) BuildSVO(svo *world.SVO) error {
+func (g *cubeGenerator) ChunkSize() uint {
+	return g.sceneSize
+}
+
+func (g *cubeGenerator) BuildSVO(svo *world.SVO, request BuildRequest) error {
 	if svo == nil {
 		return fmt.Errorf("svo is required")
 	}
-	if g.cache != nil {
-		return g.cache.restore(svo)
+	request = request.Normalized()
+	if restored, err := g.cache.restore(svo, request); restored || err != nil {
+		return err
 	}
 
-	sceneSize := int(g.sceneSize)
-	cubeSize := min(int(g.cubeSize), sceneSize)
-	start := (sceneSize - cubeSize) / 2
+	chunkSize := int(g.ChunkSize())
+	requestedSceneSize := request.SceneSize(g.ChunkSize())
+	cubeSize := min(int(g.cubeSize), chunkSize)
+	start := (chunkSize - cubeSize) / 2
 	end := start + cubeSize
 
-	svo.BuildTreeSparseFunc(g.sceneSize, func(add func(x, y, z uint, color uint32)) {
-		for z := start; z < end; z++ {
-			for y := start; y < end; y++ {
-				for x := start; x < end; x++ {
-					add(uint(x), uint(y), uint(z), g.color)
+	svo.BuildTreeSparseFunc(requestedSceneSize, func(add func(x, y, z uint, color uint32)) {
+		request.ForEachChunk(g.ChunkSize(), func(_chunkX, _chunkY int, originX, originY uint) {
+			for z := start; z < end; z++ {
+				for y := start; y < end; y++ {
+					for x := start; x < end; x++ {
+						add(originX+uint(x), originY+uint(y), uint(z), g.color)
+					}
 				}
 			}
-		}
+		})
 	})
 
-	cache := snapshot(svo)
-	g.cache = &cache
+	g.cache.store(svo, request)
 	return nil
 }

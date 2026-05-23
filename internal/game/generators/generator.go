@@ -7,13 +7,89 @@ import (
 	"Gogoxel/internal/world"
 )
 
+type BuildRequest struct {
+	ChunkX     int
+	ChunkY     int
+	ChunkRange int
+}
+
 type Generator interface {
 	Name() string
-	BuildSVO(svo *world.SVO) error
+	ChunkSize() uint
+	BuildSVO(svo *world.SVO, request BuildRequest) error
+}
+
+type CameraDrivenGenerator interface {
+	Generator
+	CameraDriven() bool
 }
 
 type svoSnapshot struct {
 	snapshot world.Snapshot
+}
+
+type snapshotCache struct {
+	request  BuildRequest
+	snapshot *svoSnapshot
+}
+
+func (r BuildRequest) Normalized() BuildRequest {
+	if r.ChunkRange < 0 {
+		r.ChunkRange = 0
+	}
+	return r
+}
+
+func (r BuildRequest) ChunkSpan() int {
+	r = r.Normalized()
+	return r.ChunkRange*2 + 1
+}
+
+func (r BuildRequest) MinChunk() (x, y int) {
+	r = r.Normalized()
+	return r.ChunkX - r.ChunkRange, r.ChunkY - r.ChunkRange
+}
+
+func (r BuildRequest) ExactSceneSize(chunkSize uint) uint {
+	if chunkSize == 0 {
+		return 1
+	}
+	return uint(r.ChunkSpan()) * chunkSize
+}
+
+func (r BuildRequest) SceneSize(chunkSize uint) uint {
+	return sceneSizeForDimension(int(r.ExactSceneSize(chunkSize)))
+}
+
+func (r BuildRequest) WorldOrigin(chunkSize uint) (x, y float32) {
+	if chunkSize == 0 {
+		return 0, 0
+	}
+	minChunkX, minChunkY := r.MinChunk()
+	return float32(minChunkX) * float32(chunkSize), float32(minChunkY) * float32(chunkSize)
+}
+
+func (r BuildRequest) LocalChunkCenter(chunkSize uint) (x, y float32) {
+	r = r.Normalized()
+	center := float32(r.ChunkRange)*float32(chunkSize) + float32(chunkSize)*0.5
+	return center, center
+}
+
+func (r BuildRequest) ForEachChunk(chunkSize uint, emit func(chunkX, chunkY int, originX, originY uint)) {
+	if emit == nil || chunkSize == 0 {
+		return
+	}
+	r = r.Normalized()
+	minChunkX, minChunkY := r.MinChunk()
+	for chunkYOffset := 0; chunkYOffset < r.ChunkSpan(); chunkYOffset++ {
+		chunkY := minChunkY + chunkYOffset
+		originY := uint(chunkYOffset) * chunkSize
+		for chunkXOffset := 0; chunkXOffset < r.ChunkSpan(); chunkXOffset++ {
+			chunkX := minChunkX + chunkXOffset
+			originX := uint(chunkXOffset) * chunkSize
+			emit(chunkX, chunkY, originX, originY)
+		}
+	}
 }
 
 func snapshot(svo *world.SVO) svoSnapshot {
@@ -22,6 +98,25 @@ func snapshot(svo *world.SVO) svoSnapshot {
 
 func (c svoSnapshot) restore(target *world.SVO) error {
 	return target.LoadSnapshot(c.snapshot)
+}
+
+func (c *snapshotCache) restore(target *world.SVO, request BuildRequest) (bool, error) {
+	if c == nil || c.snapshot == nil {
+		return false, nil
+	}
+	if c.request != request.Normalized() {
+		return false, nil
+	}
+	return true, c.snapshot.restore(target)
+}
+
+func (c *snapshotCache) store(source *world.SVO, request BuildRequest) {
+	if c == nil || source == nil {
+		return
+	}
+	value := snapshot(source)
+	c.request = request.Normalized()
+	c.snapshot = &value
 }
 
 func DefaultGenerators() []Generator {

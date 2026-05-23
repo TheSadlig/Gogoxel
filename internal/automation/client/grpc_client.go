@@ -54,8 +54,13 @@ func (c *GRPCClient) Reset(ctx context.Context) error {
 	return err
 }
 
-func (c *GRPCClient) LoadGenerator(ctx context.Context, name string) error {
-	_, err := c.control.LoadGenerator(ctx, &automationpb.LoadGeneratorRequest{Name: name})
+func (c *GRPCClient) LoadGenerator(ctx context.Context, request session.GeneratorLoadRequest) error {
+	_, err := c.control.LoadGenerator(ctx, &automationpb.LoadGeneratorRequest{
+		Name:       request.Name,
+		ChunkX:     int32(request.ChunkX),
+		ChunkY:     int32(request.ChunkY),
+		ChunkRange: uint32(request.ChunkRange),
+	})
 	return err
 }
 
@@ -233,6 +238,7 @@ func metricsFromProto(metrics *automationpb.MetricsSnapshot) session.MetricsSnap
 		Camera:                       cameraFromProto(metrics.GetCamera()),
 		CurrentGenerator:             metrics.GetCurrentGenerator(),
 		RAMBytes:                     metrics.GetRamBytes(),
+		SystemRAMBytes:               metrics.GetSystemRamBytes(),
 		VRAMBytes:                    metrics.GetVramBytes(),
 		ChunkRAMBytes:                metrics.GetChunkRamBytes(),
 		NodeCount:                    int(metrics.GetNodeCount()),

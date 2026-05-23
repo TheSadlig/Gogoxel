@@ -3,22 +3,32 @@ package vulkan
 import (
 	"container/heap"
 	"fmt"
+	"math"
 	"sync"
 	"unsafe"
 
+	"Gogoxel/internal/platform"
 	"Gogoxel/internal/world"
 
 	vk "github.com/vulkan-go/vulkan"
 )
 
 const (
-	defaultBrickUploadBudget = 128
+	defaultBrickUploadBudget = 192
+	maxBrickUploadBudget     = 384
+	uploadBudgetMotionGain   = 48
 	svoHeaderWordCount       = 2
 	// halfBrickWorldUnits is the camera-movement threshold that triggers a
 	// streaming replan: half a brick edge ensures we never miss a brick
 	// crossing between replans, while avoiding redundant planner work for
 	// sub-brick motion.
-	halfBrickWorldUnits float32 = float32(brickSizeVoxels) * 0.5
+	halfBrickWorldUnits    float32 = float32(brickSizeVoxels) * 0.5
+	nearFieldWorldUnits    float32 = float32(brickSizeVoxels) * 3
+	motionFieldWorldUnits  float32 = float32(brickSizeVoxels) * 4
+	motionPrefetchFrames   float32 = 4
+	motionPrefetchMaxUnits float32 = float32(brickSizeVoxels) * 16
+	viewConeMargin                 = 1.35
+	turnReplanDegrees      float64 = 8
 )
 
 type streamBrick struct {
@@ -89,22 +99,26 @@ type brickStreamer struct {
 	// reuse cannot mutate the streamer's previous-scene view underfoot.
 	sourceBricks []world.Brick
 	bricks       []streamBrick
+	sceneOrigin  [3]int32
 
-	cameraPosition  [3]float32
+	camera          platform.Camera
+	cameraMotion    [3]float32
 	cameraEverSet   bool
 	lastPlannedPos  [3]float32
+	lastPlannedFwd  [3]float32
 	lastPlannedOnce bool
 	desired         []int
 	desiredReady    bool
 	resident        map[int]residentBrick
 
-	residentCap   int
-	residentLimit int
-	uploadBudget  int
-	lruTick       uint64
+	residentCap     int
+	residentLimit   int
+	uploadBudget    int
+	maxUploadBudget int
+	lruTick         uint64
 
 	// Reused planner scratch.
-	desiredHeap brickDistanceHeap
+	desiredHeap brickPriorityHeap
 
 	stopCh   chan struct{}
 	doneCh   chan struct{}
@@ -152,16 +166,21 @@ func newBrickStreamerWithConfig(bricks []world.Brick, cfg brickStreamerConfig) *
 	if uploadBudget <= 0 {
 		uploadBudget = defaultBrickUploadBudget
 	}
+	maxUploadBudget := uploadBudget
+	if maxUploadBudget < maxBrickUploadBudget {
+		maxUploadBudget = maxBrickUploadBudget
+	}
 
 	streamer := &brickStreamer{
-		sourceBricks:  metadata,
-		bricks:        rebuildStreamBricks(nil, metadata),
-		resident:      make(map[int]residentBrick, residentLimit),
-		residentCap:   residentCap,
-		residentLimit: residentLimit,
-		uploadBudget:  uploadBudget,
-		stopCh:        make(chan struct{}),
-		doneCh:        make(chan struct{}),
+		sourceBricks:    metadata,
+		bricks:          rebuildStreamBricks(nil, metadata),
+		resident:        make(map[int]residentBrick, residentLimit),
+		residentCap:     residentCap,
+		residentLimit:   residentLimit,
+		uploadBudget:    uploadBudget,
+		maxUploadBudget: maxUploadBudget,
+		stopCh:          make(chan struct{}),
+		doneCh:          make(chan struct{}),
 		// dirty is 1-buffered so SetCameraPosition can signal without blocking
 		// and signals coalesce until the planner consumes one.
 		dirty: make(chan struct{}, 1),
@@ -248,42 +267,67 @@ func (s *brickStreamer) markDirty() {
 	}
 }
 
-func (s *brickStreamer) SetCameraPosition(position [3]float32) {
+func (s *brickStreamer) SetCamera(camera platform.Camera) {
 	if s == nil {
 		return
 	}
 
 	s.mu.Lock()
-	s.cameraPosition = position
-	firstSet := !s.cameraEverSet
+	previousCamera := s.camera
+	hadPreviousCamera := s.cameraEverSet
+	s.camera = camera
+	if hadPreviousCamera {
+		s.cameraMotion = [3]float32{
+			camera.Position[0] - previousCamera.Position[0],
+			camera.Position[1] - previousCamera.Position[1],
+			camera.Position[2] - previousCamera.Position[2],
+		}
+	} else {
+		s.cameraMotion = [3]float32{}
+	}
+	firstSet := !hadPreviousCamera
 	s.cameraEverSet = true
 
 	movedFarEnough := !s.lastPlannedOnce
+	turnedFarEnough := !s.lastPlannedOnce
 	if s.lastPlannedOnce {
-		dx := position[0] - s.lastPlannedPos[0]
-		dy := position[1] - s.lastPlannedPos[1]
-		dz := position[2] - s.lastPlannedPos[2]
+		dx := camera.Position[0] - s.lastPlannedPos[0]
+		dy := camera.Position[1] - s.lastPlannedPos[1]
+		dz := camera.Position[2] - s.lastPlannedPos[2]
 		movedFarEnough = dx*dx+dy*dy+dz*dz >= halfBrickWorldUnits*halfBrickWorldUnits
+		turnedFarEnough = cameraTurnedEnough(s.lastPlannedFwd, camera.Forward())
 	}
 	s.mu.Unlock()
 
-	if firstSet || movedFarEnough {
+	if firstSet || movedFarEnough || turnedFarEnough {
 		s.markDirty()
 	}
 }
 
-func (s *brickStreamer) primeCameraPosition(position [3]float32) {
+func (s *brickStreamer) primeCamera(camera platform.Camera) {
 	if s == nil {
 		return
 	}
-	desired := s.computeDesired(position)
+	desired := s.computeDesired(camera, [3]float32{})
+	forward := camera.Forward()
 	s.mu.Lock()
-	s.cameraPosition = position
+	s.camera = camera
+	s.cameraMotion = [3]float32{}
 	s.cameraEverSet = true
 	s.desired = desired
 	s.desiredReady = true
-	s.lastPlannedPos = position
+	s.lastPlannedPos = camera.Position
+	s.lastPlannedFwd = forward
 	s.lastPlannedOnce = true
+	s.mu.Unlock()
+}
+
+func (s *brickStreamer) setSceneOrigin(sceneOrigin [3]int32) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.sceneOrigin = sceneOrigin
 	s.mu.Unlock()
 }
 
@@ -308,7 +352,7 @@ func (s *brickStreamer) Stats() StreamingStats {
 		DesiredCount:  len(s.desired),
 		ResidentCount: len(s.resident),
 		ResidentLimit: s.residentLimit,
-		UploadBudget:  s.uploadBudget,
+		UploadBudget:  s.currentUploadBudgetLocked(),
 	}
 	if !s.desiredReady {
 		return stats
@@ -322,45 +366,94 @@ func (s *brickStreamer) Stats() StreamingStats {
 	return stats
 }
 
+func (s *brickStreamer) pendingDesiredCountLocked() int {
+	if s == nil || !s.desiredReady {
+		return 0
+	}
+	pending := 0
+	for _, logicalIndex := range s.desired {
+		if _, ok := s.resident[logicalIndex]; ok {
+			continue
+		}
+		pending++
+	}
+	return pending
+}
+
+func (s *brickStreamer) currentUploadBudgetLocked() int {
+	if s == nil {
+		return 0
+	}
+	budget := s.uploadBudget
+	motionSq := s.cameraMotion[0]*s.cameraMotion[0] + s.cameraMotion[1]*s.cameraMotion[1] + s.cameraMotion[2]*s.cameraMotion[2]
+	if motionSq >= halfBrickWorldUnits*halfBrickWorldUnits {
+		motionSteps := int(math.Ceil(math.Sqrt(float64(motionSq)) / float64(halfBrickWorldUnits)))
+		budget += motionSteps * uploadBudgetMotionGain
+	}
+	if pending := s.pendingDesiredCountLocked(); pending > budget {
+		budget = pending
+	}
+	if budget < s.uploadBudget {
+		budget = s.uploadBudget
+	}
+	if budget > s.maxUploadBudget {
+		budget = s.maxUploadBudget
+	}
+	return budget
+}
+
 func (s *brickStreamer) recomputeDesired() {
 	if s == nil {
 		return
 	}
 
 	s.mu.Lock()
-	cameraPosition := s.cameraPosition
+	camera := s.camera
+	cameraMotion := s.cameraMotion
 	s.mu.Unlock()
 
-	desired := s.computeDesired(cameraPosition)
+	desired := s.computeDesired(camera, cameraMotion)
+	forward := camera.Forward()
 
 	s.mu.Lock()
 	s.desired = desired
 	s.desiredReady = true
-	s.lastPlannedPos = cameraPosition
+	s.lastPlannedPos = camera.Position
+	s.lastPlannedFwd = forward
 	s.lastPlannedOnce = true
 	s.mu.Unlock()
 }
 
-// brickDistance is a (logicalIndex, distance²) pair used by the top-K planner.
-type brickDistance struct {
+// brickPriority is the planner key for a resident brick candidate.
+// Lower priorityBand is better: keep the near field first, then the current
+// view cone, then the front hemisphere, then everything behind the camera.
+type brickPriority struct {
 	logicalIndex int
+	priorityBand uint8
 	distSq       float32
+	alignment    float32
 }
 
-// brickDistanceHeap is a max-heap over distSq, used to maintain the K
-// closest bricks in O(N log K) instead of sorting all N.
-type brickDistanceHeap []brickDistance
+// brickPriorityHeap is a max-heap over the planner priority, used to maintain
+// the best K bricks in O(N log K) instead of sorting the whole scene.
+type brickPriorityHeap []brickPriority
 
-func (h brickDistanceHeap) Len() int { return len(h) }
-func (h brickDistanceHeap) Less(i, j int) bool {
-	if h[i].distSq == h[j].distSq {
-		return h[i].logicalIndex > h[j].logicalIndex
+func (h brickPriorityHeap) Len() int { return len(h) }
+func (h brickPriorityHeap) Less(i, j int) bool {
+	if h[i].priorityBand != h[j].priorityBand {
+		return h[i].priorityBand > h[j].priorityBand
 	}
-	return h[i].distSq > h[j].distSq
+	if h[i].distSq != h[j].distSq {
+		return h[i].distSq > h[j].distSq
+	}
+	if h[i].alignment != h[j].alignment {
+		return h[i].alignment < h[j].alignment
+	}
+	return h[i].logicalIndex > h[j].logicalIndex
 }
-func (h brickDistanceHeap) Swap(i, j int) { h[i], h[j] = h[j], h[i] }
-func (h *brickDistanceHeap) Push(x any)   { *h = append(*h, x.(brickDistance)) }
-func (h *brickDistanceHeap) Pop() any {
+func (h brickPriorityHeap) Swap(i, j int) { h[i], h[j] = h[j], h[i] }
+func (h *brickPriorityHeap) Push(x any)   { *h = append(*h, x.(brickPriority)) }
+func (h *brickPriorityHeap) Pop() any {
 	old := *h
 	n := len(old)
 	x := old[n-1]
@@ -368,19 +461,20 @@ func (h *brickDistanceHeap) Pop() any {
 	return x
 }
 
-func (s *brickStreamer) computeDesired(cameraPosition [3]float32) []int {
+func (s *brickStreamer) computeDesired(camera platform.Camera, cameraMotion [3]float32) []int {
 	limit := min(s.residentLimit, len(s.bricks))
 	if limit <= 0 {
 		return nil
 	}
+	prefetchPosition, hasMotionPrefetch := predictiveCameraPosition(camera.Position, cameraMotion)
 
 	// Reuse the heap's backing array across planner ticks.
 	heapSlice := s.desiredHeap[:0]
 
 	for index, brick := range s.bricks {
-		distSq := squaredDistance(cameraPosition, brick.center)
+		candidate := prioritizeBrick(camera, prefetchPosition, hasMotionPrefetch, brick.center, index)
 		if len(heapSlice) < limit {
-			heapSlice = append(heapSlice, brickDistance{logicalIndex: index, distSq: distSq})
+			heapSlice = append(heapSlice, candidate)
 			if len(heapSlice) == limit {
 				s.desiredHeap = heapSlice
 				heap.Init(&s.desiredHeap)
@@ -388,9 +482,9 @@ func (s *brickStreamer) computeDesired(cameraPosition [3]float32) []int {
 			}
 			continue
 		}
-		// Heap is full: replace root if this brick is closer than the farthest.
-		if distSq < heapSlice[0].distSq {
-			heapSlice[0] = brickDistance{logicalIndex: index, distSq: distSq}
+		// Heap is full: replace root if this brick outranks the current worst.
+		if betterBrickPriority(candidate, heapSlice[0]) {
+			heapSlice[0] = candidate
 			s.desiredHeap = heapSlice
 			heap.Fix(&s.desiredHeap, 0)
 			heapSlice = s.desiredHeap
@@ -402,9 +496,91 @@ func (s *brickStreamer) computeDesired(cameraPosition [3]float32) []int {
 	// closest-first deterministic planning.
 	out := make([]int, len(s.desiredHeap))
 	for i := len(out) - 1; i >= 0; i-- {
-		out[i] = heap.Pop(&s.desiredHeap).(brickDistance).logicalIndex
+		out[i] = heap.Pop(&s.desiredHeap).(brickPriority).logicalIndex
 	}
 	return out
+}
+
+func betterBrickPriority(a, b brickPriority) bool {
+	if a.priorityBand != b.priorityBand {
+		return a.priorityBand < b.priorityBand
+	}
+	if a.distSq != b.distSq {
+		return a.distSq < b.distSq
+	}
+	if a.alignment != b.alignment {
+		return a.alignment > b.alignment
+	}
+	return a.logicalIndex < b.logicalIndex
+}
+
+func prioritizeBrick(camera platform.Camera, prefetchPosition [3]float32, hasMotionPrefetch bool, center [3]float32, logicalIndex int) brickPriority {
+	currentDistSq := squaredDistance(camera.Position, center)
+	if currentDistSq <= nearFieldWorldUnits*nearFieldWorldUnits {
+		return brickPriority{logicalIndex: logicalIndex, priorityBand: 0, distSq: currentDistSq, alignment: 1}
+	}
+	if hasMotionPrefetch {
+		prefetchDistSq := squaredDistance(prefetchPosition, center)
+		if prefetchDistSq <= motionFieldWorldUnits*motionFieldWorldUnits {
+			return brickPriority{logicalIndex: logicalIndex, priorityBand: 1, distSq: prefetchDistSq, alignment: 1}
+		}
+	}
+
+	forward := camera.Forward()
+	offset := [3]float32{center[0] - camera.Position[0], center[1] - camera.Position[1], center[2] - camera.Position[2]}
+	distance := float32(math.Sqrt(float64(currentDistSq)))
+	alignment := float32(1)
+	if distance > 0 {
+		invDistance := 1 / distance
+		alignment = (offset[0]*forward[0] + offset[1]*forward[1] + offset[2]*forward[2]) * invDistance
+	}
+
+	priorityBand := uint8(4)
+	if alignment >= expandedViewCos(camera) {
+		priorityBand = 2
+	} else if alignment >= 0 {
+		priorityBand = 3
+	}
+	return brickPriority{logicalIndex: logicalIndex, priorityBand: priorityBand, distSq: currentDistSq, alignment: alignment}
+}
+
+func predictiveCameraPosition(position, motion [3]float32) ([3]float32, bool) {
+	motionSq := motion[0]*motion[0] + motion[1]*motion[1] + motion[2]*motion[2]
+	if motionSq < halfBrickWorldUnits*halfBrickWorldUnits {
+		return position, false
+	}
+	motionLength := float32(math.Sqrt(float64(motionSq)))
+	if motionLength == 0 {
+		return position, false
+	}
+	lookAhead := motionLength * motionPrefetchFrames
+	if lookAhead > motionPrefetchMaxUnits {
+		lookAhead = motionPrefetchMaxUnits
+	}
+	scale := lookAhead / motionLength
+	return [3]float32{
+		position[0] + motion[0]*scale,
+		position[1] + motion[1]*scale,
+		position[2] + motion[2]*scale,
+	}, true
+}
+
+func expandedViewCos(camera platform.Camera) float32 {
+	halfFovRad := float64(camera.FovDeg) * math.Pi / 360
+	if halfFovRad <= 0 {
+		halfFovRad = math.Pi / 6
+	}
+	expandedHalfFov := halfFovRad * viewConeMargin
+	maxHalfFov := math.Pi * 0.95
+	if expandedHalfFov > maxHalfFov {
+		expandedHalfFov = maxHalfFov
+	}
+	return float32(math.Cos(expandedHalfFov))
+}
+
+func cameraTurnedEnough(previousForward, nextForward [3]float32) bool {
+	dot := previousForward[0]*nextForward[0] + previousForward[1]*nextForward[1] + previousForward[2]*nextForward[2]
+	return dot <= float32(math.Cos(turnReplanDegrees*math.Pi/180))
 }
 
 func squaredDistance(a, b [3]float32) float32 {
@@ -430,6 +606,7 @@ func (s *brickStreamer) planOps(pool *brickPool) streamPlan {
 	}
 
 	plan := streamPlan{}
+	currentUploadBudget := s.currentUploadBudgetLocked()
 
 	desiredSet := make(map[int]struct{}, len(s.desired))
 	for _, logicalIndex := range s.desired {
@@ -446,11 +623,11 @@ func (s *brickStreamer) planOps(pool *brickPool) streamPlan {
 		}
 	}
 
-	plan.uploads = make([]brickUploadOp, 0, min(len(s.desired), s.uploadBudget))
-	plan.residencyDelta = make([]residencyDelta, 0, s.uploadBudget*2)
+	plan.uploads = make([]brickUploadOp, 0, min(len(s.desired), currentUploadBudget))
+	plan.residencyDelta = make([]residencyDelta, 0, currentUploadBudget*2)
 
 	for _, logicalIndex := range s.desired {
-		if len(plan.uploads) >= s.uploadBudget {
+		if len(plan.uploads) >= currentUploadBudget {
 			break
 		}
 		if _, ok := s.resident[logicalIndex]; ok {
@@ -483,45 +660,6 @@ func (s *brickStreamer) planOps(pool *brickPool) streamPlan {
 			slot:              slot,
 			evictedLogicalIdx: evictedLogicalIdx,
 		})
-	}
-
-	remainingEvictionBudget := s.uploadBudget - len(plan.uploads)
-	if remainingEvictionBudget > 0 && len(s.resident) > len(desiredSet) {
-		type lruEntry struct {
-			logicalIndex int
-			slot         uint32
-			lru          uint64
-		}
-		candidates := make([]lruEntry, 0, len(s.resident))
-		for logicalIndex, resident := range s.resident {
-			if _, ok := desiredSet[logicalIndex]; ok {
-				continue
-			}
-			candidates = append(candidates, lruEntry{logicalIndex: logicalIndex, slot: resident.slot, lru: resident.lru})
-		}
-
-		// Resident set evictions are typically small; insertion sort is fine.
-		for i := 1; i < len(candidates); i++ {
-			for j := i; j > 0 && candidates[j-1].lru > candidates[j].lru; j-- {
-				candidates[j-1], candidates[j] = candidates[j], candidates[j-1]
-			}
-		}
-
-		plan.evictions = make([]brickEvictOp, 0, min(len(candidates), remainingEvictionBudget))
-		for _, eviction := range candidates {
-			if len(plan.evictions) >= remainingEvictionBudget {
-				break
-			}
-			plan.evictions = append(plan.evictions, brickEvictOp{
-				logicalIndex: eviction.logicalIndex,
-				slot:         eviction.slot,
-			})
-			plan.frees = append(plan.frees, eviction.slot)
-			plan.residencyDelta = append(plan.residencyDelta, residencyDelta{
-				logicalIndex: eviction.logicalIndex,
-				add:          false,
-			})
-		}
 	}
 
 	return plan
@@ -594,7 +732,7 @@ func (s *brickStreamer) pickVictim(desiredSet map[int]struct{}) int {
 	return victim
 }
 
-func (s *brickStreamer) replaceSceneBricks(pool *brickPool, bricks []world.Brick) sceneUpdatePlan {
+func (s *brickStreamer) replaceSceneBricks(pool *brickPool, sceneOrigin [3]int32, bricks []world.Brick) sceneUpdatePlan {
 	if s == nil {
 		return sceneUpdatePlan{}
 	}
@@ -608,18 +746,19 @@ func (s *brickStreamer) replaceSceneBricks(pool *brickPool, bricks []world.Brick
 		voxels       *[world.BrickVoxelCount]uint8
 	}
 
-	residentByOrigin := make(map[[3]uint32]residentOrigin, len(s.resident))
+	residentByOrigin := make(map[[3]int32]residentOrigin, len(s.resident))
 	for logicalIndex, resident := range s.resident {
 		if logicalIndex < 0 || logicalIndex >= len(s.sourceBricks) {
 			continue
 		}
 		brick := s.sourceBricks[logicalIndex]
-		residentByOrigin[brick.Origin] = residentOrigin{
+		residentByOrigin[stableBrickOrigin(s.sceneOrigin, brick.Origin)] = residentOrigin{
 			logicalIndex: logicalIndex,
 			resident:     resident,
 			voxels:       brick.Voxels,
 		}
 	}
+	s.sceneOrigin = sceneOrigin
 
 	metadata := copyBrickMetadata(s.sourceBricks, bricks)
 	s.sourceBricks = metadata
@@ -632,16 +771,16 @@ func (s *brickStreamer) replaceSceneBricks(pool *brickPool, bricks []world.Brick
 	}
 	newResident := make(map[int]residentBrick, min(len(s.resident), len(bricks)))
 	for logicalIndex, brick := range bricks {
-		existing, ok := residentByOrigin[brick.Origin]
+		existing, ok := residentByOrigin[stableBrickOrigin(sceneOrigin, brick.Origin)]
 		if !ok {
 			continue
 		}
 		newResident[logicalIndex] = existing.resident
 		plan.pointerPatches = append(plan.pointerPatches, scenePointerPatch{nodeIndex: brick.NodeIndex, slot: existing.resident.slot})
-		if existing.voxels != brick.Voxels {
+		if !equalBrickVoxelPointers(existing.voxels, brick.Voxels) {
 			plan.uploads = append(plan.uploads, sceneResidentUpload{logicalIndex: logicalIndex, slot: existing.resident.slot})
 		}
-		delete(residentByOrigin, brick.Origin)
+		delete(residentByOrigin, stableBrickOrigin(sceneOrigin, brick.Origin))
 	}
 	for _, removed := range residentByOrigin {
 		if pool != nil {
@@ -656,9 +795,10 @@ func (s *brickStreamer) replaceSceneBricks(pool *brickPool, bricks []world.Brick
 		return plan
 	}
 	if s.cameraEverSet {
-		s.desired = s.computeDesired(s.cameraPosition)
+		s.desired = s.computeDesired(s.camera, s.cameraMotion)
 		s.desiredReady = true
-		s.lastPlannedPos = s.cameraPosition
+		s.lastPlannedPos = s.camera.Position
+		s.lastPlannedFwd = s.camera.Forward()
 		s.lastPlannedOnce = true
 		return plan
 	}
@@ -668,12 +808,30 @@ func (s *brickStreamer) replaceSceneBricks(pool *brickPool, bricks []world.Brick
 	return plan
 }
 
-func (chunk *ChunkResources) SetCameraPosition(position [3]float32) {
+func stableBrickOrigin(sceneOrigin [3]int32, brickOrigin [3]uint32) [3]int32 {
+	return [3]int32{
+		int32(brickOrigin[0]) + sceneOrigin[0],
+		int32(brickOrigin[1]) + sceneOrigin[1],
+		int32(brickOrigin[2]) + sceneOrigin[2],
+	}
+}
+
+func equalBrickVoxelPointers(left, right *[world.BrickVoxelCount]uint8) bool {
+	if left == right {
+		return true
+	}
+	if left == nil || right == nil {
+		return false
+	}
+	return *left == *right
+}
+
+func (chunk *ChunkResources) SetCamera(camera platform.Camera) {
 	if chunk == nil {
 		return
 	}
 	firstSet := !chunk.cameraEverSet
-	chunk.cameraPosition = position
+	chunk.camera = camera
 	chunk.cameraEverSet = true
 	if chunk.streamer == nil {
 		return
@@ -683,10 +841,10 @@ func (chunk *ChunkResources) SetCameraPosition(position [3]float32) {
 	// finds desiredReady=true and can upload bricks without waiting for the
 	// background planner goroutine to wake up.
 	if firstSet {
-		chunk.streamer.primeCameraPosition(position)
+		chunk.streamer.primeCamera(camera)
 		return
 	}
-	chunk.streamer.SetCameraPosition(position)
+	chunk.streamer.SetCamera(camera)
 }
 
 func (chunk *ChunkResources) ResidentBrickCount() int {

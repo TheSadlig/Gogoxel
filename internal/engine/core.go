@@ -3,10 +3,10 @@ package engine
 import (
 	"fmt"
 	"math"
-	"runtime"
 	"time"
 
 	"Gogoxel/internal/control"
+	"Gogoxel/internal/game/generators"
 	"Gogoxel/internal/input"
 	"Gogoxel/internal/platform"
 	"Gogoxel/internal/world"
@@ -17,11 +17,19 @@ const (
 	moveUnitsPerSecond   = float32(6)
 	turnDegreesPerSecond = float32(120)
 	maxPitchDegrees      = float32(89)
+	maxAutoChunkRange    = 10
 )
 
 type Config struct {
 	TickRateHz int
 	StartTime  time.Time
+}
+
+type GeneratorLoadRequest struct {
+	Name       string
+	ChunkX     int
+	ChunkY     int
+	ChunkRange int
 }
 
 type Snapshot struct {
@@ -35,20 +43,25 @@ type Snapshot struct {
 }
 
 type Core struct {
-	clock                Clock
-	input                *input.Manager
-	heldActions          input.Snapshot
-	catalog              *GeneratorCatalog
-	camera               platform.Camera
-	svo                  *world.SVO
-	cursor               CursorSample
-	generatorName        string
-	sceneVersion         uint64
-	elapsed              time.Duration
-	tickRateHz           int
-	tickDuration         time.Duration
-	selectedEditMaterial int
-	placeStroke          continuousEditState
+	clock                 Clock
+	input                 *input.Manager
+	heldActions           input.Snapshot
+	catalog               *GeneratorCatalog
+	generator             generators.Generator
+	camera                platform.Camera
+	sceneWorldOrigin      [3]float32
+	svo                   *world.SVO
+	cursor                CursorSample
+	generatorName         string
+	generatorBuildRequest generators.BuildRequest
+	generatorChunkSize    uint
+	generatorAutoRange    bool
+	sceneVersion          uint64
+	elapsed               time.Duration
+	tickRateHz            int
+	tickDuration          time.Duration
+	selectedEditMaterial  int
+	placeStroke           continuousEditState
 }
 
 func NewCore(catalog *GeneratorCatalog, cfg Config) *Core {
@@ -89,8 +102,13 @@ func (c *Core) Reset() {
 	clear(c.heldActions)
 	c.input.UpdateSnapshot(nil, c.clock.Now())
 	c.camera = defaultCamera()
+	c.sceneWorldOrigin = [3]float32{}
 	c.svo = nil
+	c.generator = nil
 	c.generatorName = ""
+	c.generatorBuildRequest = generators.BuildRequest{}
+	c.generatorChunkSize = 0
+	c.generatorAutoRange = false
 	c.elapsed = 0
 	c.sceneVersion++
 }
@@ -99,18 +117,69 @@ func (c *Core) LoadGenerator(name string) error {
 	if c == nil {
 		return fmt.Errorf("engine core is not initialized")
 	}
-	if c.catalog == nil {
-		return fmt.Errorf("generator catalog is not initialized")
+	item, err := c.lookupGenerator(name)
+	if err != nil {
+		return err
 	}
-	svo, err := c.catalog.Build(name)
+	if !isCameraDrivenGenerator(item) {
+		return c.loadGenerator(item, name, generators.BuildRequest{}, false, platform.Camera{}, false)
+	}
+	worldCamera := c.worldCamera()
+	buildRequest := c.cameraBuildRequest(item.ChunkSize(), worldCamera, generators.BuildRequest{}, true)
+	return c.loadGenerator(item, name, buildRequest, true, worldCamera, true)
+}
+
+func (c *Core) LoadGeneratorAt(request GeneratorLoadRequest) error {
+	if c == nil {
+		return fmt.Errorf("engine core is not initialized")
+	}
+	item, err := c.lookupGenerator(request.Name)
+	if err != nil {
+		return err
+	}
+	buildRequest := generators.BuildRequest{
+		ChunkX:     request.ChunkX,
+		ChunkY:     request.ChunkY,
+		ChunkRange: request.ChunkRange,
+	}.Normalized()
+	return c.loadGenerator(item, request.Name, buildRequest, false, platform.Camera{}, false)
+}
+
+func (c *Core) lookupGenerator(name string) (generators.Generator, error) {
+	if c == nil {
+		return nil, fmt.Errorf("engine core is not initialized")
+	}
+	if c.catalog == nil {
+		return nil, fmt.Errorf("generator catalog is not initialized")
+	}
+	item, ok := c.catalog.Lookup(name)
+	if !ok {
+		return nil, fmt.Errorf("unknown generator %q", name)
+	}
+	return item, nil
+}
+
+func (c *Core) loadGenerator(item generators.Generator, name string, buildRequest generators.BuildRequest, preserveWorldCamera bool, worldCamera platform.Camera, autoRange bool) error {
+	buildRequest = buildRequest.Normalized()
+	svo, chunkSize, err := c.catalog.Build(name, buildRequest)
 	if err != nil {
 		return err
 	}
 	c.svo = svo
+	c.generator = item
 	c.generatorName = name
-	c.resetCameraForScene()
+	c.generatorBuildRequest = buildRequest
+	c.generatorChunkSize = chunkSize
+	c.generatorAutoRange = autoRange
+	worldOriginX, worldOriginY := buildRequest.WorldOrigin(chunkSize)
+	c.sceneWorldOrigin = [3]float32{worldOriginX, worldOriginY, 0}
+	if preserveWorldCamera {
+		c.camera = c.localCamera(worldCamera)
+		c.clampCamera()
+	} else {
+		c.resetCameraForScene(buildRequest, chunkSize)
+	}
 	c.sceneVersion++
-	runtime.GC()
 	return nil
 }
 
@@ -174,12 +243,20 @@ func (c *Core) Camera() platform.Camera {
 	return c.camera
 }
 
+func (c *Core) SceneWorldOrigin() [3]int32 {
+	if c == nil {
+		return [3]int32{}
+	}
+	return [3]int32{int32(c.sceneWorldOrigin[0]), int32(c.sceneWorldOrigin[1]), int32(c.sceneWorldOrigin[2])}
+}
+
 func (c *Core) SetCamera(camera platform.Camera) {
 	if c == nil {
 		return
 	}
 	c.camera = camera
 	c.clampCamera()
+	_ = c.syncCameraDrivenGenerator()
 }
 
 func (c *Core) CurrentGeneratorName() string {
@@ -238,7 +315,9 @@ func (c *Core) Step(delta time.Duration) error {
 	}
 	c.handleMaterialCycle()
 	c.handleCursorEdits()
-	c.advanceCamera(delta)
+	if err := c.advanceCamera(delta); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -302,9 +381,9 @@ func (c *Core) handleCursorEdits() {
 	}
 }
 
-func (c *Core) advanceCamera(delta time.Duration) {
+func (c *Core) advanceCamera(delta time.Duration) error {
 	if c == nil || delta <= 0 {
-		return
+		return nil
 	}
 	deltaSeconds := float32(delta.Seconds())
 	moveStep := moveUnitsPerSecond * deltaSeconds
@@ -368,6 +447,141 @@ func (c *Core) advanceCamera(delta time.Duration) {
 		c.camera.PitchDeg += turnStep
 	}
 	c.clampCamera()
+	return c.syncCameraDrivenGenerator()
+}
+
+func (c *Core) syncCameraDrivenGenerator() error {
+	if c == nil || c.generator == nil || !isCameraDrivenGenerator(c.generator) || c.generatorChunkSize == 0 {
+		return nil
+	}
+	worldCamera := c.worldCamera()
+	nextRequest := c.cameraBuildRequest(c.generatorChunkSize, worldCamera, c.generatorBuildRequest, c.generatorAutoRange)
+	if nextRequest == c.generatorBuildRequest {
+		return nil
+	}
+	return c.loadGenerator(c.generator, c.generatorName, nextRequest, true, worldCamera, c.generatorAutoRange)
+}
+
+func (c *Core) cameraBuildRequest(chunkSize uint, worldCamera platform.Camera, current generators.BuildRequest, autoRange bool) generators.BuildRequest {
+	request := current.Normalized()
+	cameraChunkX := chunkIndexForPosition(worldCamera.Position[0], chunkSize)
+	cameraChunkY := chunkIndexForPosition(worldCamera.Position[1], chunkSize)
+	if autoRange {
+		request.ChunkRange = cameraChunkRange(worldCamera, chunkSize)
+	}
+	desiredChunkX, desiredChunkY := forwardBiasedChunkCenter(cameraChunkX, cameraChunkY, worldCamera, request.ChunkRange)
+	if current.Normalized() == (generators.BuildRequest{}) || current.ChunkRange != request.ChunkRange {
+		request.ChunkX = desiredChunkX
+		request.ChunkY = desiredChunkY
+		return request
+	}
+	request.ChunkX = stabilizedCameraChunkCenter(request.ChunkX, desiredChunkX, request.ChunkRange)
+	request.ChunkY = stabilizedCameraChunkCenter(request.ChunkY, desiredChunkY, request.ChunkRange)
+	return request
+}
+
+func forwardBiasedChunkCenter(cameraChunkX, cameraChunkY int, camera platform.Camera, chunkRange int) (int, int) {
+	lookahead := chunkLookahead(chunkRange)
+	if lookahead <= 0 {
+		return cameraChunkX, cameraChunkY
+	}
+	forward := camera.Forward()
+	horizontalX := float64(forward[0])
+	horizontalY := float64(forward[1])
+	horizontalLength := math.Hypot(horizontalX, horizontalY)
+	if horizontalLength == 0 {
+		return cameraChunkX, cameraChunkY
+	}
+	offsetX := int(math.Round(horizontalX / horizontalLength * float64(lookahead)))
+	offsetY := int(math.Round(horizontalY / horizontalLength * float64(lookahead)))
+	return cameraChunkX + offsetX, cameraChunkY + offsetY
+}
+
+func chunkLookahead(chunkRange int) int {
+	if chunkRange <= 0 {
+		return 0
+	}
+	if chunkRange == 1 {
+		return 1
+	}
+	return chunkRange - 1
+}
+
+func stabilizedCameraChunkCenter(currentCenter, cameraChunk, chunkRange int) int {
+	hysteresis := max(0, chunkRange-1)
+	if cameraChunk < currentCenter-hysteresis {
+		return cameraChunk + hysteresis
+	}
+	if cameraChunk > currentCenter+hysteresis {
+		return cameraChunk - hysteresis
+	}
+	return currentCenter
+}
+
+func (c *Core) worldCamera() platform.Camera {
+	if c == nil {
+		return platform.Camera{}
+	}
+	worldCamera := c.camera
+	worldCamera.Position[0] += c.sceneWorldOrigin[0]
+	worldCamera.Position[1] += c.sceneWorldOrigin[1]
+	worldCamera.Position[2] += c.sceneWorldOrigin[2]
+	return worldCamera
+}
+
+func (c *Core) localCamera(worldCamera platform.Camera) platform.Camera {
+	if c == nil {
+		return platform.Camera{}
+	}
+	localCamera := worldCamera
+	localCamera.Position[0] -= c.sceneWorldOrigin[0]
+	localCamera.Position[1] -= c.sceneWorldOrigin[1]
+	localCamera.Position[2] -= c.sceneWorldOrigin[2]
+	return localCamera
+}
+
+func isCameraDrivenGenerator(item generators.Generator) bool {
+	if item == nil {
+		return false
+	}
+	cameraDriven, ok := item.(generators.CameraDrivenGenerator)
+	return ok && cameraDriven.CameraDriven()
+}
+
+func chunkIndexForPosition(position float32, chunkSize uint) int {
+	if chunkSize == 0 {
+		return 0
+	}
+	return int(math.Floor(float64(position) / float64(chunkSize)))
+}
+
+func cameraChunkRange(camera platform.Camera, chunkSize uint) int {
+	if chunkSize == 0 {
+		return 0
+	}
+	halfFovRad := float64(camera.FovDeg) * math.Pi / 360
+	if halfFovRad <= 0 {
+		halfFovRad = math.Pi / 6
+	}
+	altitude := float32(math.Abs(float64(camera.Position[2])))
+	lateralReach := altitude * float32(math.Tan(halfFovRad))
+	forwardReach := float32(0)
+	bottomPitchRad := float64(camera.PitchDeg)*math.Pi/180 - halfFovRad
+	if bottomPitchRad < -0.017453292519943295 {
+		tanPitch := math.Tan(-bottomPitchRad)
+		if tanPitch > 0 {
+			forwardReach = altitude / float32(tanPitch)
+		}
+	}
+	visibleReach := maxFloat32(lateralReach, forwardReach)
+	if visibleReach <= float32(chunkSize) {
+		return 0
+	}
+	rangeChunks := int(math.Ceil(float64(visibleReach) / float64(chunkSize)))
+	if rangeChunks > maxAutoChunkRange {
+		return maxAutoChunkRange
+	}
+	return rangeChunks
 }
 
 func (c *Core) clampCamera() {
@@ -388,7 +602,7 @@ func defaultCamera() platform.Camera {
 	}
 }
 
-func (c *Core) resetCameraForScene() {
+func (c *Core) resetCameraForScene(request generators.BuildRequest, chunkSize uint) {
 	if c == nil {
 		return
 	}
@@ -404,10 +618,18 @@ func (c *Core) resetCameraForScene() {
 	centerX := (float32(minBounds[0]) + float32(maxBounds[0])) * 0.5
 	centerY := (float32(minBounds[1]) + float32(maxBounds[1])) * 0.5
 	centerZ := (float32(minBounds[2]) + float32(maxBounds[2])) * 0.5
+	if request != (generators.BuildRequest{}) && chunkSize > 0 {
+		centerX, centerY = request.LocalChunkCenter(chunkSize)
+	}
+	requestedSpan := float32(0)
+	if request != (generators.BuildRequest{}) && chunkSize > 0 {
+		requestedSpan = float32(request.ExactSceneSize(chunkSize))
+	}
 	span := maxFloat32(
 		float32(maxBounds[0]-minBounds[0]),
 		float32(maxBounds[1]-minBounds[1]),
 		float32(maxBounds[2]-minBounds[2]),
+		requestedSpan,
 	)
 	if span < 16 {
 		span = 16

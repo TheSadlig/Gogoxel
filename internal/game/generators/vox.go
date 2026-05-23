@@ -26,13 +26,13 @@ var rsvoPalette = [255]uint32{
 type voxGenerator struct {
 	name  string
 	model voxModel
-	cache *svoSnapshot
+	cache snapshotCache
 }
 
 type rsvoGenerator struct {
 	name  string
 	model rsvoModel
-	cache *svoSnapshot
+	cache snapshotCache
 }
 
 type voxModel struct {
@@ -167,27 +167,34 @@ func (g *voxGenerator) Name() string {
 	return g.name
 }
 
-func (g *voxGenerator) BuildSVO(svo *world.SVO) error {
+func (g *voxGenerator) ChunkSize() uint {
+	maxDimension := max(g.model.sizeX, max(g.model.sizeY, g.model.sizeZ))
+	return sceneSizeForDimension(maxDimension)
+}
+
+func (g *voxGenerator) BuildSVO(svo *world.SVO, request BuildRequest) error {
 	if svo == nil {
 		return fmt.Errorf("svo is required")
 	}
-	if g.cache != nil {
-		return g.cache.restore(svo)
+	request = request.Normalized()
+	if restored, err := g.cache.restore(svo, request); restored || err != nil {
+		return err
 	}
 
-	maxDimension := max(g.model.sizeX, max(g.model.sizeY, g.model.sizeZ))
-	sceneSize := sceneSizeForDimension(maxDimension)
-	offsetX := (int(sceneSize) - g.model.sizeX) / 2
-	offsetY := (int(sceneSize) - g.model.sizeY) / 2
+	chunkSize := g.ChunkSize()
+	sceneSize := request.SceneSize(chunkSize)
+	offsetX := (int(chunkSize) - g.model.sizeX) / 2
+	offsetY := (int(chunkSize) - g.model.sizeY) / 2
 
 	svo.BuildTreeSparseFunc(sceneSize, func(add func(x, y, z uint, color uint32)) {
-		for _, voxel := range g.model.voxels {
-			add(uint(offsetX+voxel.x), uint(offsetY+voxel.y), uint(voxel.z), g.model.palette[voxel.color])
-		}
+		request.ForEachChunk(chunkSize, func(_chunkX, _chunkY int, originX, originY uint) {
+			for _, voxel := range g.model.voxels {
+				add(originX+uint(offsetX+voxel.x), originY+uint(offsetY+voxel.y), uint(voxel.z), g.model.palette[voxel.color])
+			}
+		})
 	})
 
-	cache := snapshot(svo)
-	g.cache = &cache
+	g.cache.store(svo, request)
 	return nil
 }
 
@@ -195,22 +202,40 @@ func (g *rsvoGenerator) Name() string {
 	return g.name
 }
 
-func (g *rsvoGenerator) BuildSVO(svo *world.SVO) error {
+func (g *rsvoGenerator) ChunkSize() uint {
+	if g.model.topLevel <= 0 {
+		return 1
+	}
+	return uint(1) << uint(g.model.topLevel)
+}
+
+func (g *rsvoGenerator) BuildSVO(svo *world.SVO, request BuildRequest) error {
 	if svo == nil {
 		return fmt.Errorf("svo is required")
 	}
-	if g.cache != nil {
-		return g.cache.restore(svo)
+	request = request.Normalized()
+	if restored, err := g.cache.restore(svo, request); restored || err != nil {
+		return err
 	}
 
 	pruneLevel := g.model.pruneLevelForNodeBudget(maxRSVONodeBudget)
-	minBounds, maxBounds, ok := g.model.mirroredBoundsForPruneLevel(pruneLevel)
-	if err := svo.LoadStorageBufferWords(g.model.toStorageBufferWords(pruneLevel), minBounds, maxBounds, ok); err != nil {
-		return fmt.Errorf("loading rsvo storage words: %w", err)
+	if request == (BuildRequest{}) {
+		minBounds, maxBounds, ok := g.model.mirroredBoundsForPruneLevel(pruneLevel)
+		if err := svo.LoadStorageBufferWords(g.model.toStorageBufferWords(pruneLevel), minBounds, maxBounds, ok); err != nil {
+			return fmt.Errorf("loading rsvo storage words: %w", err)
+		}
+		g.cache.store(svo, request)
+		return nil
 	}
 
-	cache := snapshot(svo)
-	g.cache = &cache
+	sceneSize := request.SceneSize(g.ChunkSize())
+	svo.BuildTreeSparseVolumes(sceneSize, func(_addVoxel func(x, y, z uint, color uint32), addCube func(x, y, z, cubeSize uint, color uint32)) {
+		request.ForEachChunk(g.ChunkSize(), func(_chunkX, _chunkY int, originX, originY uint) {
+			g.model.emitMirroredVolumes(addCube, pruneLevel, originX, originY)
+		})
+	})
+
+	g.cache.store(svo, request)
 	return nil
 }
 
@@ -683,6 +708,45 @@ func (m rsvoModel) fillStorageBufferNode(words *[]uint32, nodeIndex uint32, node
 	}
 	for childIndex, child := range children {
 		m.fillStorageBufferNode(words, baseChildPointer+uint32(childIndex), child.node, pruneLevel)
+	}
+}
+
+func (m rsvoModel) emitMirroredVolumes(addCube func(x, y, z, cubeSize uint, color uint32), pruneLevel int, originX, originY uint) {
+	if addCube == nil {
+		return
+	}
+	rootSize := 1 << uint(m.topLevel)
+	m.emitMirroredNodeVolumes(addCube, rsvoNode{level: m.topLevel, nodeIndex: 0, minX: 0, minY: 0, minZ: 0, size: rootSize}, pruneLevel, originX, originY, rootSize)
+}
+
+func (m rsvoModel) emitMirroredNodeVolumes(addCube func(x, y, z, cubeSize uint, color uint32), node rsvoNode, pruneLevel int, originX, originY uint, rootSize int) {
+	if node.level <= pruneLevel {
+		mirroredZ := rootSize - (node.minZ + node.size)
+		addCube(originX+uint(node.minX), originY+uint(node.minY), uint(mirroredZ), uint(node.size), m.palette[1])
+		return
+	}
+
+	mask := m.levels[node.level].masks[node.nodeIndex]
+	if mask == 0 {
+		return
+	}
+
+	childBase := m.childBase(node.level, node.nodeIndex)
+	childSize := node.size / 2
+	childOffset := 0
+	for bitIndex := 0; bitIndex < 8; bitIndex++ {
+		if mask&(1<<uint(bitIndex)) == 0 {
+			continue
+		}
+		m.emitMirroredNodeVolumes(addCube, rsvoNode{
+			level:     node.level - 1,
+			nodeIndex: childBase + childOffset,
+			minX:      node.minX + (bitIndex&1)*childSize,
+			minY:      node.minY + ((bitIndex>>1)&1)*childSize,
+			minZ:      node.minZ + ((bitIndex>>2)&1)*childSize,
+			size:      childSize,
+		}, pruneLevel, originX, originY, rootSize)
+		childOffset++
 	}
 }
 

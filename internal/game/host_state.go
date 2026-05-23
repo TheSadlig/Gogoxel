@@ -144,12 +144,12 @@ func (s *sessionState) metricsSnapshot() session.MetricsSnapshot {
 	snapshot := s.game.Snapshot()
 	streaming := s.game.StreamingStats()
 	frameWindow := s.frameWindow.Snapshot()
-	memStats := &runtime.MemStats{}
-	runtime.ReadMemStats(memStats)
+	memory := currentProcessMemoryStats()
 	return session.MetricsSnapshot{
 		Camera:                       snapshot.Camera,
 		CurrentGenerator:             snapshot.GeneratorName,
-		RAMBytes:                     memStats.Alloc,
+		RAMBytes:                     memory.HeapBytes,
+		SystemRAMBytes:               memory.SystemBytes,
 		VRAMBytes:                    s.game.VRAMBytes(),
 		ChunkRAMBytes:                s.game.ChunkRAMBytes(),
 		NodeCount:                    snapshot.NodeCount,

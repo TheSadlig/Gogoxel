@@ -20,10 +20,10 @@ type stagingRing struct {
 }
 
 // stagingRingBytesPerSlot sizes each frame slot's staging ring. It must be
-// large enough to hold one frame's worth of streaming uploads. The current
-// upload budget is defaultBrickUploadBudget (128) bricks x 512B = 64KB, so
-// 128KB leaves headroom for alignment and future transfer growth.
-const stagingRingBytesPerSlot vk.DeviceSize = 128 * 1024
+// large enough to hold one frame's worth of streaming uploads plus scene-copy
+// headroom on camera-driven reload frames. A 1 MiB slot keeps this buffer tiny
+// relative to scene memory while leaving room for higher high-speed budgets.
+const stagingRingBytesPerSlot vk.DeviceSize = 1024 * 1024
 
 func alignDeviceSize(value, alignment vk.DeviceSize) vk.DeviceSize {
 	if alignment <= 1 {

@@ -77,8 +77,19 @@ func (s *Server) LoadGenerator(ctx context.Context, request *automationpb.LoadGe
 	if request == nil || strings.TrimSpace(request.GetName()) == "" {
 		return nil, invalidArgument("generator_name_required", "generator name is required")
 	}
-	if err := s.service.LoadGenerator(ctx, request.GetName()); err != nil {
-		return nil, statusError(err, map[string]string{"generator_name": request.GetName()})
+	loadRequest := session.GeneratorLoadRequest{
+		Name:       request.GetName(),
+		ChunkX:     int(request.GetChunkX()),
+		ChunkY:     int(request.GetChunkY()),
+		ChunkRange: int(request.GetChunkRange()),
+	}
+	if err := s.service.LoadGenerator(ctx, loadRequest); err != nil {
+		return nil, statusError(err, map[string]string{
+			"generator_name": request.GetName(),
+			"chunk_x":        fmt.Sprintf("%d", loadRequest.ChunkX),
+			"chunk_y":        fmt.Sprintf("%d", loadRequest.ChunkY),
+			"chunk_range":    fmt.Sprintf("%d", loadRequest.ChunkRange),
+		})
 	}
 	readiness, err := s.service.GetReadiness(ctx)
 	if err != nil {
@@ -300,6 +311,7 @@ func metricsToProto(metrics session.MetricsSnapshot) *automationpb.MetricsSnapsh
 		Camera:                       cameraToProto(metrics.Camera),
 		CurrentGenerator:             metrics.CurrentGenerator,
 		RamBytes:                     metrics.RAMBytes,
+		SystemRamBytes:               metrics.SystemRAMBytes,
 		VramBytes:                    metrics.VRAMBytes,
 		ChunkRamBytes:                metrics.ChunkRAMBytes,
 		NodeCount:                    uint64(metrics.NodeCount),
