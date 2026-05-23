@@ -116,6 +116,7 @@ type brickStreamer struct {
 	uploadBudget    int
 	maxUploadBudget int
 	lruTick         uint64
+	sceneRevision   uint64
 
 	// Reused planner scratch.
 	desiredHeap brickPriorityHeap
@@ -179,6 +180,7 @@ func newBrickStreamerWithConfig(bricks []world.Brick, cfg brickStreamerConfig) *
 		residentLimit:   residentLimit,
 		uploadBudget:    uploadBudget,
 		maxUploadBudget: maxUploadBudget,
+		sceneRevision:   1,
 		stopCh:          make(chan struct{}),
 		doneCh:          make(chan struct{}),
 		// dirty is 1-buffered so SetCameraPosition can signal without blocking
@@ -308,7 +310,11 @@ func (s *brickStreamer) primeCamera(camera platform.Camera) {
 	if s == nil {
 		return
 	}
-	desired := s.computeDesired(camera, [3]float32{})
+	s.mu.Lock()
+	bricks := append([]streamBrick(nil), s.bricks...)
+	residentLimit := s.residentLimit
+	s.mu.Unlock()
+	desired := computeDesiredSnapshot(bricks, residentLimit, camera, [3]float32{})
 	forward := camera.Forward()
 	s.mu.Lock()
 	s.camera = camera
@@ -346,6 +352,7 @@ func (s *brickStreamer) Stats() StreamingStats {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.ensureDesiredIndicesLocked()
 
 	stats := StreamingStats{
 		DesiredReady:  s.desiredReady,
@@ -370,6 +377,7 @@ func (s *brickStreamer) pendingDesiredCountLocked() int {
 	if s == nil || !s.desiredReady {
 		return 0
 	}
+	s.ensureDesiredIndicesLocked()
 	pending := 0
 	for _, logicalIndex := range s.desired {
 		if _, ok := s.resident[logicalIndex]; ok {
@@ -410,12 +418,19 @@ func (s *brickStreamer) recomputeDesired() {
 	s.mu.Lock()
 	camera := s.camera
 	cameraMotion := s.cameraMotion
+	bricks := append([]streamBrick(nil), s.bricks...)
+	residentLimit := s.residentLimit
+	sceneRevision := s.sceneRevision
 	s.mu.Unlock()
 
-	desired := s.computeDesired(camera, cameraMotion)
+	desired := computeDesiredSnapshot(bricks, residentLimit, camera, cameraMotion)
 	forward := camera.Forward()
 
 	s.mu.Lock()
+	if s.sceneRevision != sceneRevision {
+		s.mu.Unlock()
+		return
+	}
 	s.desired = desired
 	s.desiredReady = true
 	s.lastPlannedPos = camera.Position
@@ -462,43 +477,79 @@ func (h *brickPriorityHeap) Pop() any {
 }
 
 func (s *brickStreamer) computeDesired(camera platform.Camera, cameraMotion [3]float32) []int {
-	limit := min(s.residentLimit, len(s.bricks))
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	bricks := append([]streamBrick(nil), s.bricks...)
+	residentLimit := s.residentLimit
+	s.mu.Unlock()
+	return computeDesiredSnapshot(bricks, residentLimit, camera, cameraMotion)
+}
+
+func (s *brickStreamer) computeDesiredLocked(camera platform.Camera, cameraMotion [3]float32) []int {
+	if s == nil {
+		return nil
+	}
+	return computeDesiredSnapshot(s.bricks, s.residentLimit, camera, cameraMotion)
+}
+
+func computeDesiredSnapshot(bricks []streamBrick, residentLimit int, camera platform.Camera, cameraMotion [3]float32) []int {
+	limit := min(residentLimit, len(bricks))
 	if limit <= 0 {
 		return nil
 	}
 	prefetchPosition, hasMotionPrefetch := predictiveCameraPosition(camera.Position, cameraMotion)
 
-	// Reuse the heap's backing array across planner ticks.
-	heapSlice := s.desiredHeap[:0]
+	var desiredHeap brickPriorityHeap
+	heapSlice := desiredHeap[:0]
 
-	for index, brick := range s.bricks {
+	for index, brick := range bricks {
 		candidate := prioritizeBrick(camera, prefetchPosition, hasMotionPrefetch, brick.center, index)
 		if len(heapSlice) < limit {
 			heapSlice = append(heapSlice, candidate)
 			if len(heapSlice) == limit {
-				s.desiredHeap = heapSlice
-				heap.Init(&s.desiredHeap)
-				heapSlice = s.desiredHeap
+				desiredHeap = heapSlice
+				heap.Init(&desiredHeap)
+				heapSlice = desiredHeap
 			}
 			continue
 		}
 		// Heap is full: replace root if this brick outranks the current worst.
 		if betterBrickPriority(candidate, heapSlice[0]) {
 			heapSlice[0] = candidate
-			s.desiredHeap = heapSlice
-			heap.Fix(&s.desiredHeap, 0)
-			heapSlice = s.desiredHeap
+			desiredHeap = heapSlice
+			heap.Fix(&desiredHeap, 0)
+			heapSlice = desiredHeap
 		}
 	}
-	s.desiredHeap = heapSlice
 
 	// Drain the max-heap to get farthest-first order, then reverse for
 	// closest-first deterministic planning.
-	out := make([]int, len(s.desiredHeap))
+	out := make([]int, len(heapSlice))
 	for i := len(out) - 1; i >= 0; i-- {
-		out[i] = heap.Pop(&s.desiredHeap).(brickPriority).logicalIndex
+		out[i] = heap.Pop(&desiredHeap).(brickPriority).logicalIndex
 	}
 	return out
+}
+
+func (s *brickStreamer) ensureDesiredIndicesLocked() {
+	if s == nil || !s.desiredReady {
+		return
+	}
+	if desiredIndicesValid(s.desired, len(s.bricks)) {
+		return
+	}
+	s.desired = s.computeDesiredLocked(s.camera, s.cameraMotion)
+}
+
+func desiredIndicesValid(desired []int, brickCount int) bool {
+	for _, logicalIndex := range desired {
+		if logicalIndex < 0 || logicalIndex >= brickCount {
+			return false
+		}
+	}
+	return true
 }
 
 func betterBrickPriority(a, b brickPriority) bool {
@@ -604,18 +655,25 @@ func (s *brickStreamer) planOps(pool *brickPool) streamPlan {
 	if len(s.bricks) == 0 || !s.desiredReady {
 		return streamPlan{}
 	}
+	s.ensureDesiredIndicesLocked()
 
 	plan := streamPlan{}
 	currentUploadBudget := s.currentUploadBudgetLocked()
 
 	desiredSet := make(map[int]struct{}, len(s.desired))
 	for _, logicalIndex := range s.desired {
+		if logicalIndex < 0 || logicalIndex >= len(s.bricks) {
+			continue
+		}
 		desiredSet[logicalIndex] = struct{}{}
 	}
 
 	// Touch LRU for already-resident desired bricks. Slightly-stale LRU on
 	// recording failure is harmless.
 	for _, logicalIndex := range s.desired {
+		if logicalIndex < 0 || logicalIndex >= len(s.bricks) {
+			continue
+		}
 		if resident, ok := s.resident[logicalIndex]; ok {
 			s.lruTick++
 			resident.lru = s.lruTick
@@ -629,6 +687,9 @@ func (s *brickStreamer) planOps(pool *brickPool) streamPlan {
 	for _, logicalIndex := range s.desired {
 		if len(plan.uploads) >= currentUploadBudget {
 			break
+		}
+		if logicalIndex < 0 || logicalIndex >= len(s.bricks) {
+			continue
 		}
 		if _, ok := s.resident[logicalIndex]; ok {
 			continue
@@ -764,6 +825,7 @@ func (s *brickStreamer) replaceSceneBricks(pool *brickPool, sceneOrigin [3]int32
 	s.sourceBricks = metadata
 	s.bricks = rebuildStreamBricks(s.bricks, metadata)
 	s.residentLimit = clampResidentLimit(s.residentCap, len(bricks))
+	s.sceneRevision++
 
 	plan := sceneUpdatePlan{
 		pointerPatches: make([]scenePointerPatch, 0, len(residentByOrigin)),
@@ -795,7 +857,7 @@ func (s *brickStreamer) replaceSceneBricks(pool *brickPool, sceneOrigin [3]int32
 		return plan
 	}
 	if s.cameraEverSet {
-		s.desired = s.computeDesired(s.camera, s.cameraMotion)
+		s.desired = s.computeDesiredLocked(s.camera, s.cameraMotion)
 		s.desiredReady = true
 		s.lastPlannedPos = s.camera.Position
 		s.lastPlannedFwd = s.camera.Forward()
@@ -896,7 +958,13 @@ func (chunk *ChunkResources) recordPlan(frame *Frame, plan streamPlan) error {
 
 	bufferTouched := false
 	for _, upload := range plan.uploads {
+		if upload.logicalIndex < 0 || upload.logicalIndex >= len(chunk.streamer.bricks) {
+			return fmt.Errorf("streaming upload logical index %d out of range for %d bricks", upload.logicalIndex, len(chunk.streamer.bricks))
+		}
 		if upload.evictedLogicalIdx >= 0 {
+			if upload.evictedLogicalIdx >= len(chunk.streamer.bricks) {
+				return fmt.Errorf("streaming eviction logical index %d out of range for %d bricks", upload.evictedLogicalIdx, len(chunk.streamer.bricks))
+			}
 			chunk.patchNodePointer(frame, chunk.streamer.bricks[upload.evictedLogicalIdx].nodeIndex, 0)
 			bufferTouched = true
 		}
@@ -910,6 +978,9 @@ func (chunk *ChunkResources) recordPlan(frame *Frame, plan streamPlan) error {
 	}
 
 	for _, eviction := range plan.evictions {
+		if eviction.logicalIndex < 0 || eviction.logicalIndex >= len(chunk.streamer.bricks) {
+			return fmt.Errorf("streaming plan eviction logical index %d out of range for %d bricks", eviction.logicalIndex, len(chunk.streamer.bricks))
+		}
 		chunk.patchNodePointer(frame, chunk.streamer.bricks[eviction.logicalIndex].nodeIndex, 0)
 		bufferTouched = true
 	}

@@ -47,6 +47,7 @@ type Core struct {
 	input                 *input.Manager
 	heldActions           input.Snapshot
 	catalog               *GeneratorCatalog
+	chunkScene            *chunkSceneManager
 	generator             generators.Generator
 	camera                platform.Camera
 	sceneWorldOrigin      [3]float32
@@ -99,6 +100,7 @@ func (c *Core) Reset() {
 	if c == nil {
 		return
 	}
+	c.closeChunkSceneManager()
 	clear(c.heldActions)
 	c.input.UpdateSnapshot(nil, c.clock.Now())
 	c.camera = defaultCamera()
@@ -121,6 +123,11 @@ func (c *Core) LoadGenerator(name string) error {
 	if err != nil {
 		return err
 	}
+	if streamGenerator, ok := asChunkStreamGenerator(item); ok {
+		worldCamera := c.worldCamera()
+		buildRequest := c.cameraBuildRequest(item.ChunkSize(), worldCamera, generators.BuildRequest{}, true)
+		return c.loadChunkStreamGenerator(streamGenerator, name, buildRequest, true, worldCamera, true)
+	}
 	if !isCameraDrivenGenerator(item) {
 		return c.loadGenerator(item, name, generators.BuildRequest{}, false, platform.Camera{}, false)
 	}
@@ -142,6 +149,9 @@ func (c *Core) LoadGeneratorAt(request GeneratorLoadRequest) error {
 		ChunkY:     request.ChunkY,
 		ChunkRange: request.ChunkRange,
 	}.Normalized()
+	if streamGenerator, ok := asChunkStreamGenerator(item); ok {
+		return c.loadChunkStreamGenerator(streamGenerator, request.Name, buildRequest, false, platform.Camera{}, false)
+	}
 	return c.loadGenerator(item, request.Name, buildRequest, false, platform.Camera{}, false)
 }
 
@@ -160,6 +170,7 @@ func (c *Core) lookupGenerator(name string) (generators.Generator, error) {
 }
 
 func (c *Core) loadGenerator(item generators.Generator, name string, buildRequest generators.BuildRequest, preserveWorldCamera bool, worldCamera platform.Camera, autoRange bool) error {
+	c.closeChunkSceneManager()
 	buildRequest = buildRequest.Normalized()
 	svo, chunkSize, err := c.catalog.Build(name, buildRequest)
 	if err != nil {
@@ -181,6 +192,47 @@ func (c *Core) loadGenerator(item generators.Generator, name string, buildReques
 	}
 	c.sceneVersion++
 	return nil
+}
+
+func (c *Core) loadChunkStreamGenerator(item generators.ChunkStreamGenerator, name string, buildRequest generators.BuildRequest, preserveWorldCamera bool, worldCamera platform.Camera, autoRange bool) error {
+	if c == nil {
+		return fmt.Errorf("engine core is not initialized")
+	}
+	c.closeChunkSceneManager()
+
+	manager := newChunkSceneManager(item)
+	buildRequest = buildRequest.Normalized()
+	svo, err := manager.LoadInitial(buildRequest)
+	if err != nil {
+		manager.Close()
+		return err
+	}
+
+	c.chunkScene = manager
+	c.svo = svo
+	c.generator = item
+	c.generatorName = name
+	c.generatorBuildRequest = buildRequest
+	c.generatorChunkSize = item.ChunkSize()
+	c.generatorAutoRange = autoRange
+	worldOriginX, worldOriginY := buildRequest.WorldOrigin(c.generatorChunkSize)
+	c.sceneWorldOrigin = [3]float32{worldOriginX, worldOriginY, 0}
+	if preserveWorldCamera {
+		c.camera = c.localCamera(worldCamera)
+		c.clampCamera()
+	} else {
+		c.resetCameraForScene(buildRequest, c.generatorChunkSize)
+	}
+	c.sceneVersion++
+	return nil
+}
+
+func (c *Core) closeChunkSceneManager() {
+	if c == nil || c.chunkScene == nil {
+		return
+	}
+	c.chunkScene.Close()
+	c.chunkScene = nil
 }
 
 func (c *Core) TickRateHz() int {
@@ -455,11 +507,41 @@ func (c *Core) syncCameraDrivenGenerator() error {
 		return nil
 	}
 	worldCamera := c.worldCamera()
+	if c.chunkScene != nil {
+		nextRequest := c.cameraBuildRequest(c.generatorChunkSize, worldCamera, c.generatorBuildRequest, c.generatorAutoRange)
+		c.chunkScene.SetRequest(nextRequest)
+		return c.applyChunkSceneUpdate(worldCamera)
+	}
 	nextRequest := c.cameraBuildRequest(c.generatorChunkSize, worldCamera, c.generatorBuildRequest, c.generatorAutoRange)
 	if nextRequest == c.generatorBuildRequest {
 		return nil
 	}
 	return c.loadGenerator(c.generator, c.generatorName, nextRequest, true, worldCamera, c.generatorAutoRange)
+}
+
+func (c *Core) applyChunkSceneUpdate(worldCamera platform.Camera) error {
+	if c == nil || c.chunkScene == nil {
+		return nil
+	}
+	scene, request, err, ok := c.chunkScene.TakeUpdate()
+	if !ok {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if scene == nil {
+		return nil
+	}
+
+	c.svo = scene
+	c.generatorBuildRequest = request
+	worldOriginX, worldOriginY := request.WorldOrigin(c.generatorChunkSize)
+	c.sceneWorldOrigin = [3]float32{worldOriginX, worldOriginY, 0}
+	c.camera = c.localCamera(worldCamera)
+	c.clampCamera()
+	c.sceneVersion++
+	return nil
 }
 
 func (c *Core) cameraBuildRequest(chunkSize uint, worldCamera platform.Camera, current generators.BuildRequest, autoRange bool) generators.BuildRequest {
@@ -546,6 +628,14 @@ func isCameraDrivenGenerator(item generators.Generator) bool {
 	}
 	cameraDriven, ok := item.(generators.CameraDrivenGenerator)
 	return ok && cameraDriven.CameraDriven()
+}
+
+func asChunkStreamGenerator(item generators.Generator) (generators.ChunkStreamGenerator, bool) {
+	if item == nil {
+		return nil, false
+	}
+	streamGenerator, ok := item.(generators.ChunkStreamGenerator)
+	return streamGenerator, ok
 }
 
 func chunkIndexForPosition(position float32, chunkSize uint) int {

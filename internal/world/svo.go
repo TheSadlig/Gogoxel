@@ -2,6 +2,7 @@ package world
 
 import (
 	"fmt"
+	"math/bits"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -1164,4 +1165,61 @@ func (s *SVO) OccupiedBounds() (min, max [3]uint32, ok bool) {
 	return [3]uint32{uint32(s.occupiedMin[0]), uint32(s.occupiedMin[1]), uint32(s.occupiedMin[2])},
 		[3]uint32{uint32(s.occupiedMax[0]), uint32(s.occupiedMax[1]), uint32(s.occupiedMax[2])},
 		true
+}
+
+func (s *SVO) EmitTranslatedMaterialVolumes(offsetX, offsetY, offsetZ uint, addCube func(x, y, z, cubeSize uint, color uint32), addBrick func(x, y, z uint, voxels *[BrickVoxelCount]uint8)) {
+	if s == nil || len(s.nodes) == 0 {
+		return
+	}
+	root := s.nodes[0]
+	if len(s.nodes) == 1 && !root.isSolidLeaf() && !root.isBrickLeaf() && root.childMask() == 0 {
+		return
+	}
+	s.emitTranslatedMaterialNode(0, [3]uint{}, s.size, [3]uint{offsetX, offsetY, offsetZ}, addCube, addBrick)
+}
+
+func (s *SVO) emitTranslatedMaterialNode(nodeIndex uint32, origin [3]uint, nodeSize uint, offset [3]uint, addCube func(x, y, z, cubeSize uint, color uint32), addBrick func(x, y, z uint, voxels *[BrickVoxelCount]uint8)) {
+	if s == nil || int(nodeIndex) >= len(s.nodes) || nodeSize == 0 {
+		return
+	}
+	node := s.nodes[nodeIndex]
+	if node.isBrickLeaf() {
+		if addBrick == nil {
+			return
+		}
+		brick, ok := s.brickForNode(nodeIndex)
+		if !ok || brick.Voxels == nil {
+			return
+		}
+		addBrick(offset[0]+origin[0], offset[1]+origin[1], offset[2]+origin[2], brick.Voxels)
+		return
+	}
+	if node.isSolidLeaf() {
+		if addCube == nil {
+			return
+		}
+		color := s.palette[node.materialID()]
+		if color != 0 {
+			addCube(offset[0]+origin[0], offset[1]+origin[1], offset[2]+origin[2], nodeSize, color)
+		}
+		return
+	}
+	childMask := node.childMask()
+	if childMask == 0 || node.childPointer == 0 || nodeSize <= 1 {
+		return
+	}
+
+	childSize := nodeSize >> 1
+	for octant := 0; octant < 8; octant++ {
+		bit := uint8(1 << uint8(octant))
+		if childMask&bit == 0 {
+			continue
+		}
+		childIndex := node.childPointer + uint32(bits.OnesCount8(childMask&(bit-1)))
+		childOrigin := origin
+		childOrigin[0] += uint(octant&1) * childSize
+		childOrigin[1] += uint((octant>>1)&1) * childSize
+		childOrigin[2] += uint((octant>>2)&1) * childSize
+		s.emitTranslatedMaterialNode(childIndex, childOrigin, childSize, offset, addCube, addBrick)
+	}
 }

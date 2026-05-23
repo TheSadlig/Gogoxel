@@ -159,11 +159,32 @@ func (p *perlinGenerator) CameraDriven() bool {
 	return true
 }
 
+func (p *perlinGenerator) ChunkPaletteColors() []uint32 {
+	colors := make([]uint32, len(perlinPaletteColors))
+	copy(colors, perlinPaletteColors)
+	return colors
+}
+
 func (p *perlinGenerator) ChunkSize() uint {
 	return p.sceneSize
 }
 
+func (p *perlinGenerator) BuildChunkSVO(svo *world.SVO, chunkX, chunkY int) error {
+	if svo == nil {
+		return fmt.Errorf("svo is required")
+	}
+	request := BuildRequest{ChunkX: chunkX, ChunkY: chunkY, ChunkRange: 0}
+	return p.buildSVO(svo, request, sceneSizeForDimension(max(int(p.sceneSize), int(p.terrainScale))))
+}
+
 func (p *perlinGenerator) BuildSVO(svo *world.SVO, request BuildRequest) error {
+	if svo == nil {
+		return fmt.Errorf("svo is required")
+	}
+	return p.buildSVO(svo, request, request.SceneSize(p.ChunkSize()))
+}
+
+func (p *perlinGenerator) buildSVO(svo *world.SVO, request BuildRequest, sceneSize uint) error {
 	if svo == nil {
 		return fmt.Errorf("svo is required")
 	}
@@ -173,7 +194,7 @@ func (p *perlinGenerator) BuildSVO(svo *world.SVO, request BuildRequest) error {
 	sceneScale := p.terrainScale
 	chunkSize := p.ChunkSize()
 
-	svo.BuildTreeSparseVolumesWithMaterialBricks(request.SceneSize(chunkSize), perlinPaletteColors, func(addCube func(x, y, z, cubeSize uint, color uint32), addBrick func(x, y, z uint, voxels *[world.BrickVoxelCount]uint8)) {
+	svo.BuildTreeSparseVolumesWithMaterialBricks(sceneSize, perlinPaletteColors, func(addCube func(x, y, z, cubeSize uint, color uint32), addBrick func(x, y, z uint, voxels *[world.BrickVoxelCount]uint8)) {
 		request.ForEachChunk(chunkSize, func(chunkX, chunkY int, originX, originY uint) {
 			chunk := p.chunkData(chunkX, chunkY, chunkSize, sceneScale, layers)
 			for _, cube := range chunk.cubes {

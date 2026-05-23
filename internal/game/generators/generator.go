@@ -24,6 +24,12 @@ type CameraDrivenGenerator interface {
 	CameraDriven() bool
 }
 
+type ChunkStreamGenerator interface {
+	CameraDrivenGenerator
+	ChunkPaletteColors() []uint32
+	BuildChunkSVO(svo *world.SVO, chunkX, chunkY int) error
+}
+
 type svoSnapshot struct {
 	snapshot world.Snapshot
 }

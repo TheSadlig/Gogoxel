@@ -130,6 +130,37 @@ func TestPlanOpsAvoidsEagerEvictionsUnderCapacity(t *testing.T) {
 	}
 }
 
+func TestPlanOpsRepairsStaleDesiredIndices(t *testing.T) {
+	streamer := newBrickStreamerWithConfig(testStreamBricks(
+		[3]uint32{0, 0, 0},
+		[3]uint32{16, 0, 0},
+	), brickStreamerConfig{ResidentLimit: 1, UploadBudget: 1})
+	if streamer == nil {
+		t.Fatal("expected streamer")
+	}
+	defer streamer.Close()
+
+	streamer.camera = platform.Camera{Position: [3]float32{4, 4, 4}, YawDeg: 0, PitchDeg: 0, FovDeg: 60}
+	streamer.cameraEverSet = true
+	streamer.desiredReady = true
+	streamer.desired = []int{5}
+
+	pool, err := newBrickPoolState(16)
+	if err != nil {
+		t.Fatalf("newBrickPoolState returned error: %v", err)
+	}
+
+	plan := streamer.planOps(pool)
+	if len(plan.uploads) == 0 {
+		t.Fatal("expected stale desired indices to be recomputed into a valid upload plan")
+	}
+	for _, upload := range plan.uploads {
+		if upload.logicalIndex < 0 || upload.logicalIndex >= len(streamer.bricks) {
+			t.Fatalf("expected repaired upload index within range, got %d for %d bricks", upload.logicalIndex, len(streamer.bricks))
+		}
+	}
+}
+
 func TestReplaceSceneBricksSkipsUploadForEqualVoxelContent(t *testing.T) {
 	oldVoxels := &[world.BrickVoxelCount]uint8{}
 	oldVoxels[0] = 1
