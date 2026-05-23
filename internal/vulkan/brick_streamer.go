@@ -113,12 +113,12 @@ type brickStreamer struct {
 }
 
 type StreamingStats struct {
-	DesiredReady       bool
-	DesiredCount       int
-	ResidentCount      int
+	DesiredReady        bool
+	DesiredCount        int
+	ResidentCount       int
 	PendingDesiredCount int
-	ResidentLimit      int
-	UploadBudget       int
+	ResidentLimit       int
+	UploadBudget        int
 }
 
 // brickStreamerConfig customises the streaming budget. Zero-valued fields
@@ -136,7 +136,7 @@ func newBrickStreamerWithConfig(bricks []world.Brick, cfg brickStreamerConfig) *
 	if len(bricks) == 0 {
 		return nil
 	}
-	metadata := cloneBrickMetadata(bricks)
+	metadata := copyBrickMetadata(nil, bricks)
 
 	residentCap := cfg.ResidentLimit
 	if residentCap <= 0 {
@@ -155,7 +155,7 @@ func newBrickStreamerWithConfig(bricks []world.Brick, cfg brickStreamerConfig) *
 
 	streamer := &brickStreamer{
 		sourceBricks:  metadata,
-		bricks:        make([]streamBrick, len(bricks)),
+		bricks:        rebuildStreamBricks(nil, metadata),
 		resident:      make(map[int]residentBrick, residentLimit),
 		residentCap:   residentCap,
 		residentLimit: residentLimit,
@@ -166,9 +166,35 @@ func newBrickStreamerWithConfig(bricks []world.Brick, cfg brickStreamerConfig) *
 		// and signals coalesce until the planner consumes one.
 		dirty: make(chan struct{}, 1),
 	}
+	go streamer.run()
+	return streamer
+}
+
+func copyBrickMetadata(dst, bricks []world.Brick) []world.Brick {
+	if len(bricks) == 0 {
+		return nil
+	}
+	if cap(dst) < len(bricks) {
+		dst = make([]world.Brick, len(bricks))
+	} else {
+		dst = dst[:len(bricks)]
+	}
+	copy(dst, bricks)
+	return dst
+}
+
+func rebuildStreamBricks(dst []streamBrick, metadata []world.Brick) []streamBrick {
+	if len(metadata) == 0 {
+		return nil
+	}
+	if cap(dst) < len(metadata) {
+		dst = make([]streamBrick, len(metadata))
+	} else {
+		dst = dst[:len(metadata)]
+	}
 	for index := range metadata {
 		brick := &metadata[index]
-		streamer.bricks[index] = streamBrick{
+		dst[index] = streamBrick{
 			nodeIndex: brick.NodeIndex,
 			origin:    brick.Origin,
 			center: [3]float32{
@@ -179,18 +205,7 @@ func newBrickStreamerWithConfig(bricks []world.Brick, cfg brickStreamerConfig) *
 			voxels: brick.Voxels,
 		}
 	}
-
-	go streamer.run()
-	return streamer
-}
-
-func cloneBrickMetadata(bricks []world.Brick) []world.Brick {
-	if len(bricks) == 0 {
-		return nil
-	}
-	metadata := make([]world.Brick, len(bricks))
-	copy(metadata, bricks)
-	return metadata
+	return dst
 }
 
 func clampResidentLimit(residentCap int, brickCount int) int {
@@ -606,23 +621,10 @@ func (s *brickStreamer) replaceSceneBricks(pool *brickPool, bricks []world.Brick
 		}
 	}
 
-	metadata := cloneBrickMetadata(bricks)
+	metadata := copyBrickMetadata(s.sourceBricks, bricks)
 	s.sourceBricks = metadata
-	s.bricks = make([]streamBrick, len(metadata))
+	s.bricks = rebuildStreamBricks(s.bricks, metadata)
 	s.residentLimit = clampResidentLimit(s.residentCap, len(bricks))
-	for index := range metadata {
-		brick := &metadata[index]
-		s.bricks[index] = streamBrick{
-			nodeIndex: brick.NodeIndex,
-			origin:    brick.Origin,
-			center: [3]float32{
-				float32(brick.Origin[0]) + float32(brickSizeVoxels)*0.5,
-				float32(brick.Origin[1]) + float32(brickSizeVoxels)*0.5,
-				float32(brick.Origin[2]) + float32(brickSizeVoxels)*0.5,
-			},
-			voxels: brick.Voxels,
-		}
-	}
 
 	plan := sceneUpdatePlan{
 		pointerPatches: make([]scenePointerPatch, 0, len(residentByOrigin)),

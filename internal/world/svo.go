@@ -289,6 +289,10 @@ func (s *SVO) Snapshot() Snapshot {
 	}
 }
 
+func (s *SVO) LastEditUsedFullRebuild() bool {
+	return s != nil && s.lastEdit.mode == editApplyModeFullRebuild
+}
+
 func (s *SVO) beginBuild(size uint) map[uint64]*stagingNode {
 	s.size = octreeSize(size)
 	s.nodes = s.nodes[:0]

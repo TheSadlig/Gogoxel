@@ -3,6 +3,7 @@ package engine
 import (
 	"fmt"
 	"math"
+	"runtime"
 	"time"
 
 	"Gogoxel/internal/control"
@@ -109,6 +110,7 @@ func (c *Core) LoadGenerator(name string) error {
 	c.generatorName = name
 	c.resetCameraForScene()
 	c.sceneVersion++
+	runtime.GC()
 	return nil
 }
 

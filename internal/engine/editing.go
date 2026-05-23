@@ -3,6 +3,7 @@ package engine
 import (
 	"fmt"
 	"math"
+	"runtime"
 	"strings"
 
 	"Gogoxel/internal/platform"
@@ -156,6 +157,9 @@ func (c *Core) applyCursorEditSamples(mode EditMode, samples []cursorEditSample,
 	if c.svo.ApplyVoxelEdits(edits) > 0 {
 		result.Changed = true
 		c.sceneVersion++
+		if c.svo.LastEditUsedFullRebuild() {
+			runtime.GC()
+		}
 	}
 	return result, nil
 }
@@ -338,7 +342,7 @@ func cursorRay(camera platform.Camera, cursor CursorSample) (world.Ray, error) {
 	normalizedX := clampFloat(cursor.NormalizedX, 0, 1)
 	normalizedY := clampFloat(cursor.NormalizedY, 0, 1)
 	screenX := normalizedX*2 - 1
-	screenY := 1 - normalizedY*2
+	screenY := normalizedY*2 - 1
 	aspect := float32(cursor.ViewportWidth) / float32(cursor.ViewportHeight)
 	fovScale := float32(math.Tan(float64(camera.FovDeg) * 0.5 * math.Pi / 180.0))
 	screenX *= aspect * fovScale
