@@ -142,6 +142,23 @@ func (s *SVO) tryApplyVoxelEditsIncremental(edits []VoxelEdit) (int, bool) {
 	for _, mutation := range mutationOrder {
 		mutation.node.brickVoxels = mutation.voxels
 		s.bricks[mutation.brickIndex].Voxels = mutation.voxels
+
+		// Keep the fallback materialID in the node payload consistent with the
+		// new dominant voxel material. This matters for non-resident bricks: the
+		// shader uses the fallback when childPointer == 0, so a stale payload
+		// would render the wrong color after eviction.
+		newFallback := dominantBrickMaterial(mutation.voxels)
+		mutation.node.setBrickLeaf(0, newFallback)
+		nodeIdx := s.bricks[mutation.brickIndex].NodeIndex
+		if int(nodeIdx) < len(s.nodes) {
+			s.nodes[nodeIdx].payload = mutation.node.payload
+			// childPointer in CPU-side nodes is always 0; GPU slot is
+			// patched separately via patchNodePointer, so no update needed.
+		}
+		storageWordIdx := storageWordCount + int(nodeIdx)*2
+		if storageWordIdx < len(s.storageWords) {
+			s.storageWords[storageWordIdx] = mutation.node.payload
+		}
 	}
 	for _, position := range addedPositions {
 		s.extendOccupiedBounds(uint(position[0]), uint(position[1]), uint(position[2]), 1)
