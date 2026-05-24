@@ -159,7 +159,8 @@ vec4 shadeMaterial(uint materialID, vec3 normal) {
     // north-east tilt.  Using max(0,dot)*diffuse + ambient keeps all faces
     // visible while avoiding harsh near-white Y-face speckling.
     vec3 lightDir = normalize(vec3(0.6, 0.8, 1.0));
-    float lighting = max(0.0, dot(normal, lightDir)) * 0.7 + 0.3;
+    float diffuse = max(0.0, dot(normal, lightDir));
+    float lighting = 0.72 + diffuse * 0.18;
     return vec4(voxelColor.rgb * lighting, 1.0);
 }
 
@@ -366,6 +367,24 @@ vec4 raymarchVoxels(vec3 ro, vec3 rd) {
                 uint hitMaterialID = 0u;
                 vec3 hitNormal = vec3(0.0);
                 uvec3 brickOrigin = unmirrorNodeOrigin(currentOrigin, currentSize, sceneSize, raySign);
+                if (currentNode.childPointer == 0u) {
+                    uint fallbackMaterialID = nodeMaterialID(currentNode);
+                    if (fallbackMaterialID > 0u) {
+                        // Use a fixed sky-facing normal for all fallback bricks.
+                        // The SVO entry-face normal alternates between Z-face and side-faces
+                        // on slopes, creating a herringbone stripe artifact.  A stable
+                        // up-vector gives consistent base lighting; per-brick hash variation
+                        // then breaks up the uniform flat appearance.
+                        vec4 baseColor = shadeMaterial(fallbackMaterialID, vec3(0.0, 0.0, 1.0));
+                        float bx = float(brickOrigin.x >> 3u);
+                        float by = float(brickOrigin.y >> 3u);
+                        float bz = float(brickOrigin.z >> 3u);
+                        float h = fract(sin(dot(vec3(bx, by, bz), vec3(12.9898, 78.233, 37.719))) * 43758.5453);
+                        float variation = 0.82 + h * 0.36;
+                        return vec4(baseColor.rgb * variation, baseColor.a);
+                    }
+                    break;
+                }
                 if (raymarchBrick(currentNode.childPointer, brickOrigin, ro + rd * t, rd, faceMask, hasFaceMask, hitMaterialID, hitNormal)) {
                     return shadeMaterial(hitMaterialID, hitNormal);
                 }

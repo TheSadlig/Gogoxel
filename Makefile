@@ -66,7 +66,7 @@ test-unit:
 test-godog:
 	GOGOXEL_BDD_GPU='$(BDD_GPU)' GODOG_TAGS='$(GODOG_TAGS)' go test -count=1 -tags=godog ./test/bdd
 
-test-godog-artifacts:
+test-godog-artifacts: shaders
 	rm -rf '$(BDD_ARTIFACT_DIR)/hidden-window'
 	mkdir -p '$(BDD_ARTIFACT_DIR)/hidden-window'
 	GOGOXEL_BDD_GPU='1' GOGOXEL_BDD_ARTIFACT_DIR='$(BDD_ARTIFACT_DIR)/hidden-window' GODOG_TAGS='@gpu&&~@perf' go test -v -tags=godog ./test/bdd
