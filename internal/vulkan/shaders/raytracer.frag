@@ -246,8 +246,35 @@ bool raymarchBrick(
 
         uint materialID = texelFetch(brickPoolTexture, brickOriginPool + voxel, 0).r;
         if (materialID > 0u) {
-            uint hitAxis = hasFaceMask ? resolveFaceAxis(faceMask, rd) : dominantAxis(rd);
-            hitNormal = axisNormal(hitAxis, rd);
+            // Gradient-based surface normal from 6 axis-aligned neighbours.
+            // Each axis: solidNeg - solidPos gives the outward normal component.
+            // Voxels outside the brick are treated as solid (surrounding terrain)
+            // so the gradient is defined at brick boundaries.
+            // This avoids herringbone artefacts on slopes where the DDA entry-face
+            // alternates between Z-face and X/Y-face on consecutive voxels.
+            ivec3 brickMax = ivec3(int(BrickSize));
+            vec3 grad = vec3(0.0);
+            for (int axis = 0; axis < 3; axis++) {
+                ivec3 dn = ivec3(0); dn[axis] = -1;
+                ivec3 dp = ivec3(0); dp[axis] =  1;
+                ivec3 vn = voxel + dn;
+                ivec3 vp = voxel + dp;
+                float sn = (any(lessThan(vn, ivec3(0))) || any(greaterThanEqual(vn, brickMax))) ? 1.0
+                           : (texelFetch(brickPoolTexture, brickOriginPool + vn, 0).r > 0u ? 1.0 : 0.0);
+                float sp = (any(lessThan(vp, ivec3(0))) || any(greaterThanEqual(vp, brickMax))) ? 1.0
+                           : (texelFetch(brickPoolTexture, brickOriginPool + vp, 0).r > 0u ? 1.0 : 0.0);
+                grad[axis] = sn - sp;
+            }
+            if (dot(grad, grad) > 1e-4) {
+                hitNormal = normalize(grad);
+                // Ensure the normal faces toward the camera (against the ray).
+                if (dot(hitNormal, rd) > 0.0) hitNormal = -hitNormal;
+            } else {
+                // Uniform neighbourhood (interior voxel or brick boundary):
+                // fall back to DDA entry-face normal.
+                uint hitAxis = hasFaceMask ? resolveFaceAxis(faceMask, rd) : dominantAxis(rd);
+                hitNormal = axisNormal(hitAxis, rd);
+            }
             hitMaterialID = materialID;
             return true;
         }
@@ -392,7 +419,19 @@ vec4 raymarchVoxels(vec3 ro, vec3 rd) {
             }
 
             if (isSolidLeaf(currentNode)) {
-                uint hitAxis = hasFaceMask ? resolveFaceAxis(faceMask, rd) : dominantAxis(rd);
+                // For solid leaves (no per-voxel data), use the entry-face normal.
+                // When the ray hits from a side face (X/Y) but is travelling mostly
+                // downward, it likely struck a slope transition rather than a true
+                // vertical cliff — prefer Z-up to reduce coarse-scale herringbone.
+                uint hitAxis;
+                if (hasFaceMask) {
+                    uint faceAxis = resolveFaceAxis(faceMask, rd);
+                    bool sideHit = (faceAxis != AXIS_Z);
+                    bool steepRay = abs(rd.z) > max(abs(rd.x), abs(rd.y));
+                    hitAxis = (sideHit && steepRay) ? AXIS_Z : faceAxis;
+                } else {
+                    hitAxis = dominantAxis(rd);
+                }
                 return shadeMaterial(nodeMaterialID(currentNode), axisNormal(hitAxis, rd));
             }
 
