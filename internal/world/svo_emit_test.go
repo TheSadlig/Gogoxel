@@ -51,6 +51,64 @@ func TestEmitTranslatedMaterialVolumesAppliesOffset(t *testing.T) {
 	}
 }
 
+func TestBrickLeafPayloadStoresDominantFallbackMaterial(t *testing.T) {
+	svo := mixedBrickFallbackSVO(t)
+	brick := svo.BricksRef()[0]
+	node := svo.nodes[brick.NodeIndex]
+
+	if !node.isBrickLeaf() {
+		t.Fatalf("node %d is not a brick leaf", brick.NodeIndex)
+	}
+	if got, want := node.materialID(), uint8(2); got != want {
+		t.Fatalf("brick fallback material = %d, want %d", got, want)
+	}
+	if got, want := node.payload, BrickLeafFlag|uint32(2)<<8; got != want {
+		t.Fatalf("brick payload = %#x, want %#x", got, want)
+	}
+}
+
+func TestLoadSnapshotRepairsMissingBrickFallbackMaterial(t *testing.T) {
+	source := mixedBrickFallbackSVO(t)
+	snapshot := source.Snapshot()
+	brick := snapshot.Bricks[0]
+	nodeWordIndex := storageWordCount + int(brick.NodeIndex)*2
+	snapshot.Words[nodeWordIndex] = BrickLeafFlag
+
+	loaded := NewSVO()
+	if err := loaded.LoadSnapshot(snapshot); err != nil {
+		t.Fatalf("LoadSnapshot returned error: %v", err)
+	}
+	loadedBrick := loaded.BricksRef()[0]
+	loadedNode := loaded.nodes[loadedBrick.NodeIndex]
+	if got, want := loadedNode.materialID(), uint8(2); got != want {
+		t.Fatalf("repaired fallback material = %d, want %d", got, want)
+	}
+	if got, want := loaded.StorageBufferWordsRef()[nodeWordIndex], BrickLeafFlag|uint32(2)<<8; got != want {
+		t.Fatalf("repaired storage payload = %#x, want %#x", got, want)
+	}
+}
+
+func mixedBrickFallbackSVO(t *testing.T) *SVO {
+	t.Helper()
+	palette := []uint32{0xFF00FF00, 0xFF888888}
+	voxels := &[BrickVoxelCount]uint8{}
+	for index := 0; index < 300; index++ {
+		voxels[index] = 2
+	}
+	for index := 300; index < 360; index++ {
+		voxels[index] = 1
+	}
+
+	svo := NewSVO()
+	svo.BuildTreeSparseVolumesWithMaterialBricks(8, palette, func(_ func(x, y, z, cubeSize uint, color uint32), addBrick func(x, y, z uint, voxels *[BrickVoxelCount]uint8)) {
+		addBrick(0, 0, 0, voxels)
+	})
+	if got := svo.BrickCount(); got != 1 {
+		t.Fatalf("brick count = %d, want 1", got)
+	}
+	return svo
+}
+
 func assertSVOEquivalent(t *testing.T, got, want *SVO) {
 	t.Helper()
 	if got == nil || want == nil {

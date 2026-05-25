@@ -10,6 +10,7 @@ import (
 
 	"Gogoxel/internal/automation/grpcserver"
 	"Gogoxel/internal/game"
+	"Gogoxel/internal/game/generators"
 
 	"google.golang.org/grpc"
 )
@@ -22,7 +23,29 @@ func main() {
 	hiddenWindow := flag.Bool("hidden-window", false, "hide the window when the session initializes the renderer")
 	tickRateHz := flag.Int("tick-rate", 60, "fixed automation simulation tick rate")
 	artifactDir := flag.String("artifact-dir", "artifacts/automation", "directory for automation artifacts")
+	chunkRoot := flag.String("chunk-root", "", "directory containing generated chunk maps for runtime loading")
+	generateMap := flag.String("generate-map", "", "generate a named chunk map into --chunk-root and exit")
+	generateChunkX := flag.Int("generate-chunk-x", 0, "chunk-space X center for --generate-map")
+	generateChunkY := flag.Int("generate-chunk-y", 0, "chunk-space Y center for --generate-map")
+	generateChunkRange := flag.Int("generate-chunk-range", 0, "chunk-space range for --generate-map")
 	flag.Parse()
+
+	if strings.TrimSpace(*generateMap) != "" {
+		if strings.TrimSpace(*chunkRoot) == "" {
+			log.Fatal("--chunk-root is required with --generate-map")
+		}
+		generator, ok := generators.LookupDefaultChunkGenerator(*generateMap)
+		if !ok {
+			log.Fatalf("unknown chunk generator %q", *generateMap)
+		}
+		request := generators.BuildRequest{ChunkX: *generateChunkX, ChunkY: *generateChunkY, ChunkRange: *generateChunkRange}.Normalized()
+		mapDir := generators.GeneratedChunkMapDir(*chunkRoot, generator.Name())
+		if err := generators.GenerateChunkMapWindow(mapDir, generator, request); err != nil {
+			log.Fatal(err)
+		}
+		log.Printf("generated chunk map %q at %s for center=(%d,%d) range=%d", generator.Name(), mapDir, request.ChunkX, request.ChunkY, request.ChunkRange)
+		return
+	}
 
 	if *automationMode {
 		if err := runSession(*listenAddress, game.HostOptions{
@@ -31,6 +54,7 @@ func main() {
 			AutomationExposed: true,
 			TickRateHz:   *tickRateHz,
 			ArtifactDir:  *artifactDir,
+			ChunkRoot:    *chunkRoot,
 		}); err != nil {
 			log.Fatal(err)
 		}
@@ -48,6 +72,7 @@ func main() {
 		AutomationExposed: strings.TrimSpace(*liveListenAddress) != "",
 		TickRateHz:   *tickRateHz,
 		ArtifactDir:  *artifactDir,
+		ChunkRoot:    *chunkRoot,
 	}); err != nil {
 		log.Fatal(err)
 	}

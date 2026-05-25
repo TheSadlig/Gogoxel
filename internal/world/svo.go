@@ -47,6 +47,7 @@ const (
 type editStats struct {
 	mode          editApplyMode
 	touchedBricks int
+	brickIndices  []int
 }
 
 type SVO struct {
@@ -70,7 +71,8 @@ type SVO struct {
 // meanings depending on node kind:
 //   - Branch:     low 8 bits = child mask
 //   - SolidLeaf:  bits 8..30 = materialID; low 8 bits = 1 (sentinel)
-//   - BrickLeaf:  bit 31 set (BrickLeafFlag); ChildPointer holds the brick slot
+//   - BrickLeaf:  bit 31 set (BrickLeafFlag); bits 8..30 = fallback materialID;
+//     ChildPointer holds the resident brick slot, or 0 while nonresident.
 //
 // The shader-side SVONode struct mirrors this layout (see raytracer.frag).
 type SvoNode struct {
@@ -88,8 +90,8 @@ func (n *SvoNode) setSolidLeaf(materialID uint8) {
 	n.childPointer = 0
 }
 
-func (n *SvoNode) setBrickLeaf(slot uint32) {
-	n.payload = BrickLeafFlag
+func (n *SvoNode) setBrickLeaf(slot uint32, fallbackMaterialID uint8) {
+	n.payload = BrickLeafFlag | uint32(fallbackMaterialID)<<8
 	n.childPointer = slot
 }
 
@@ -309,8 +311,26 @@ func (s *SVO) LoadSnapshot(snapshot Snapshot) error {
 
 	s.bricks = make([]Brick, len(snapshot.Bricks))
 	copy(s.bricks, snapshot.Bricks)
+	s.repairBrickLeafFallbacks()
 	s.rebuildBrickNodeLookup()
+	s.rebuildStorageWords()
 	return nil
+}
+
+func (s *SVO) repairBrickLeafFallbacks() {
+	if s == nil || len(s.nodes) == 0 || len(s.bricks) == 0 {
+		return
+	}
+	for _, brick := range s.bricks {
+		if int(brick.NodeIndex) >= len(s.nodes) || brick.Voxels == nil {
+			continue
+		}
+		node := &s.nodes[brick.NodeIndex]
+		if !node.isBrickLeaf() {
+			continue
+		}
+		node.setBrickLeaf(node.childPointer, dominantBrickMaterial(brick.Voxels))
+	}
 }
 
 func (s *SVO) Snapshot() Snapshot {
@@ -332,6 +352,15 @@ func (s *SVO) Snapshot() Snapshot {
 
 func (s *SVO) LastEditUsedFullRebuild() bool {
 	return s != nil && s.lastEdit.mode == editApplyModeFullRebuild
+}
+
+func (s *SVO) LastEditTouchedBrickIndices() []int {
+	if s == nil || len(s.lastEdit.brickIndices) == 0 {
+		return nil
+	}
+	indices := make([]int, len(s.lastEdit.brickIndices))
+	copy(indices, s.lastEdit.brickIndices)
+	return indices
 }
 
 func (s *SVO) beginBuild(size uint) map[uint64]*stagingNode {
@@ -437,11 +466,18 @@ func (s *SVO) ensurePaletteColors(colors []uint32) {
 	if s == nil {
 		return
 	}
-	for _, color := range colors {
+	for index, color := range colors {
 		if color == 0 {
 			continue
 		}
-		s.materialForColor(color)
+		if index+1 >= len(s.palette) {
+			break
+		}
+		materialID := uint8(index + 1)
+		s.palette[materialID] = color
+		if _, exists := s.colorToMaterial[color]; !exists {
+			s.colorToMaterial[color] = materialID
+		}
 	}
 }
 
@@ -456,6 +492,26 @@ func paletteColorDistance(a, b uint32) int {
 
 func packedColorRGB(color uint32) (int, int, int) {
 	return int(color & 0xFF), int((color >> 8) & 0xFF), int((color >> 16) & 0xFF)
+}
+
+func dominantBrickMaterial(voxels *[BrickVoxelCount]uint8) uint8 {
+	if voxels == nil {
+		return 0
+	}
+	var counts [PaletteSize]int
+	bestMaterialID := uint8(0)
+	bestCount := 0
+	for _, materialID := range voxels[:] {
+		if materialID == 0 || int(materialID) >= len(counts) {
+			continue
+		}
+		counts[materialID]++
+		if counts[materialID] > bestCount {
+			bestMaterialID = materialID
+			bestCount = counts[materialID]
+		}
+	}
+	return bestMaterialID
 }
 
 func (s *SVO) deriveOccupiedBounds(leafLayer map[uint64]*stagingNode) {
@@ -699,7 +755,7 @@ func (s *SVO) insertVolumeBrick(node *stagingNode, originX, originY, originZ, no
 		node.tempChildren = [8]*stagingNode{}
 		node.brickVoxels = voxels
 		node.brickIndex = brickIndex
-		node.setBrickLeaf(0)
+		node.setBrickLeaf(0, dominantBrickMaterial(voxels))
 		return
 	}
 
@@ -922,7 +978,7 @@ func (s *SVO) finalizeBrickParent(parent *stagingNode, key uint64) {
 	s.fillBrickVoxels(voxels, parent, BrickSize, 0, 0, 0)
 	parent.tempChildren = [8]*stagingNode{}
 	parent.brickVoxels = voxels
-	parent.setBrickLeaf(0)
+	parent.setBrickLeaf(0, dominantBrickMaterial(voxels))
 	parent.brickIndex = len(s.bricks)
 	s.bricks = append(s.bricks, brick)
 }
@@ -951,7 +1007,7 @@ func (s *SVO) fillBrickJobsParallel(jobs []*stagingNode) {
 			s.fillBrickVoxels(voxels, parent, BrickSize, 0, 0, 0)
 			parent.tempChildren = [8]*stagingNode{}
 			parent.brickVoxels = voxels
-			parent.setBrickLeaf(0)
+			parent.setBrickLeaf(0, dominantBrickMaterial(voxels))
 		}
 		return
 	}
@@ -972,7 +1028,7 @@ func (s *SVO) fillBrickJobsParallel(jobs []*stagingNode) {
 				s.fillBrickVoxels(voxels, parent, BrickSize, 0, 0, 0)
 				parent.tempChildren = [8]*stagingNode{}
 				parent.brickVoxels = voxels
-				parent.setBrickLeaf(0)
+				parent.setBrickLeaf(0, dominantBrickMaterial(voxels))
 			}
 		}()
 	}

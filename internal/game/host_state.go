@@ -20,6 +20,7 @@ func newSessionState(options HostOptions) (*sessionState, error) {
 		Headless:     options.Headless,
 		HiddenWindow: options.HiddenWindow,
 		TickRateHz:   options.TickRateHz,
+		ChunkRoot:    options.ChunkRoot,
 	})
 	if err := g.Start(); err != nil {
 		return nil, err

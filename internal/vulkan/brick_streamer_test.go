@@ -12,7 +12,7 @@ func TestCurrentUploadBudgetLockedRaisesWithMotionAndPending(t *testing.T) {
 		[3]uint32{0, 0, 0},
 		[3]uint32{16, 0, 0},
 		[3]uint32{24, 0, 0},
-	), brickStreamerConfig{ResidentLimit: 3, UploadBudget: 192})
+	), brickStreamerConfig{ResidentLimit: 3, UploadBudget: 64})
 	if streamer == nil {
 		t.Fatal("expected streamer")
 	}
@@ -29,6 +29,82 @@ func TestCurrentUploadBudgetLockedRaisesWithMotionAndPending(t *testing.T) {
 	}
 	if got > streamer.maxUploadBudget {
 		t.Fatalf("expected dynamic budget to stay within cap %d, got %d", streamer.maxUploadBudget, got)
+	}
+}
+
+func TestCurrentUploadBudgetLockedAllowsSmallScenePrefill(t *testing.T) {
+	bricks := make([]world.Brick, scenePrefillBudgetLimit)
+	for index := range bricks {
+		bricks[index] = world.Brick{Origin: [3]uint32{uint32(index * 8), 0, 0}}
+	}
+
+	streamer := newBrickStreamerWithConfig(bricks, brickStreamerConfig{ResidentLimit: 200, UploadBudget: 192})
+	if streamer == nil {
+		t.Fatal("expected streamer")
+	}
+	defer streamer.Close()
+
+	streamer.desiredReady = true
+	streamer.desired = make([]int, len(bricks))
+	for index := range streamer.desired {
+		streamer.desired[index] = index
+	}
+	streamer.resident = map[int]residentBrick{}
+	streamer.scenePrefill = true
+
+	if got, want := streamer.currentUploadBudgetLocked(), len(bricks); got != want {
+		t.Fatalf("scene prefill upload budget = %d, want %d", got, want)
+	}
+}
+
+func TestCurrentUploadBudgetLockedBoundsLargeScenePrefill(t *testing.T) {
+	bricks := make([]world.Brick, 500)
+	for index := range bricks {
+		bricks[index] = world.Brick{Origin: [3]uint32{uint32(index * 8), 0, 0}}
+	}
+
+	streamer := newBrickStreamerWithConfig(bricks, brickStreamerConfig{ResidentLimit: 500, UploadBudget: 192})
+	if streamer == nil {
+		t.Fatal("expected streamer")
+	}
+	defer streamer.Close()
+
+	streamer.desiredReady = true
+	streamer.desired = make([]int, len(bricks))
+	for index := range streamer.desired {
+		streamer.desired[index] = index
+	}
+	streamer.resident = map[int]residentBrick{}
+	streamer.scenePrefill = true
+
+	if got, want := streamer.currentUploadBudgetLocked(), streamer.uploadBudget; got != want {
+		t.Fatalf("large scene prefill upload budget = %d, want %d", got, want)
+	}
+	if streamer.scenePrefill {
+		t.Fatal("expected large scene prefill to fall back to steady-state streaming")
+	}
+}
+
+func TestNewBrickStreamerDefaultResidentLimitStaysBelowPoolCapacity(t *testing.T) {
+	bricks := make([]world.Brick, defaultResidentBrickLimit+1024)
+	for index := range bricks {
+		bricks[index] = world.Brick{Origin: [3]uint32{uint32(index * 8), 0, 0}}
+	}
+
+	streamer := newBrickStreamer(bricks)
+	if streamer == nil {
+		t.Fatal("expected streamer")
+	}
+	defer streamer.Close()
+
+	if streamer.residentCap != defaultResidentBrickCap {
+		t.Fatalf("resident cap = %d, want %d", streamer.residentCap, defaultResidentBrickCap)
+	}
+	if streamer.residentTargetLimit != defaultResidentBrickLimit {
+		t.Fatalf("resident target limit = %d, want %d", streamer.residentTargetLimit, defaultResidentBrickLimit)
+	}
+	if streamer.residentLimit != defaultResidentBrickLimit {
+		t.Fatalf("resident limit = %d, want %d", streamer.residentLimit, defaultResidentBrickLimit)
 	}
 }
 
@@ -99,6 +175,42 @@ func TestComputeDesiredPrefetchesMotionCorridor(t *testing.T) {
 	}
 	if desired[1] != 1 {
 		t.Fatalf("expected motion corridor to prefetch the upcoming brick next, got desired=%v", desired)
+	}
+}
+
+func TestComputeDesiredUsesFullResidentLimitWhenStationary(t *testing.T) {
+	bricks := make([]world.Brick, 700)
+	for index := range bricks {
+		bricks[index] = world.Brick{Origin: [3]uint32{uint32(index * 8), 0, 0}}
+	}
+
+	streamer := newBrickStreamerWithConfig(bricks, brickStreamerConfig{ResidentLimit: 4096, UploadBudget: 192})
+	if streamer == nil {
+		t.Fatal("expected streamer")
+	}
+	defer streamer.Close()
+
+	desired := streamer.computeDesired(platform.Camera{Position: [3]float32{4, 4, 4}, YawDeg: 0, PitchDeg: 0, FovDeg: 60}, [3]float32{})
+	if got, want := len(desired), len(bricks); got != want {
+		t.Fatalf("stationary desired count = %d, want %d", got, want)
+	}
+}
+
+func TestComputeDesiredUsesFullResidentLimitWhenMoving(t *testing.T) {
+	bricks := make([]world.Brick, 1500)
+	for index := range bricks {
+		bricks[index] = world.Brick{Origin: [3]uint32{uint32(index * 8), 0, 0}}
+	}
+
+	streamer := newBrickStreamerWithConfig(bricks, brickStreamerConfig{ResidentLimit: 4096, UploadBudget: 192})
+	if streamer == nil {
+		t.Fatal("expected streamer")
+	}
+	defer streamer.Close()
+
+	desired := streamer.computeDesired(platform.Camera{Position: [3]float32{4, 4, 4}, YawDeg: 0, PitchDeg: 0, FovDeg: 60}, [3]float32{halfBrickWorldUnits, 0, 0})
+	if got, want := len(desired), len(bricks); got != want {
+		t.Fatalf("moving desired count = %d, want %d", got, want)
 	}
 }
 
@@ -229,6 +341,43 @@ func TestReplaceSceneBricksReusesResidentSlotAcrossSceneOriginShift(t *testing.T
 	}
 	if got := streamer.resident[0].slot; got != 9 {
 		t.Fatalf("expected resident slot to be preserved across scene shift, got %d", got)
+	}
+}
+
+func TestUpdateSceneBricksUploadsOnlyChangedResidentBricks(t *testing.T) {
+	oldVoxels := &[world.BrickVoxelCount]uint8{}
+	oldVoxels[0] = 1
+	newVoxels := &[world.BrickVoxelCount]uint8{}
+	newVoxels[0] = 2
+
+	streamer := newBrickStreamerWithConfig([]world.Brick{{
+		NodeIndex: 7,
+		Origin:    [3]uint32{16, 24, 0},
+		Voxels:    oldVoxels,
+	}}, brickStreamerConfig{ResidentLimit: 1, UploadBudget: 1})
+	if streamer == nil {
+		t.Fatal("expected streamer")
+	}
+	defer streamer.Close()
+
+	streamer.resident = map[int]residentBrick{0: {slot: 9, lru: 1}}
+	uploads := streamer.updateSceneBricks([]world.Brick{{
+		NodeIndex: 7,
+		Origin:    [3]uint32{16, 24, 0},
+		Voxels:    newVoxels,
+	}}, []int{0})
+
+	if len(uploads) != 1 {
+		t.Fatalf("expected one upload, got %d", len(uploads))
+	}
+	if uploads[0] != (sceneResidentUpload{logicalIndex: 0, slot: 9}) {
+		t.Fatalf("unexpected upload %+v", uploads[0])
+	}
+	if streamer.sourceBricks[0].Voxels != newVoxels {
+		t.Fatal("expected source bricks to update to new voxel pointer")
+	}
+	if streamer.bricks[0].voxels != newVoxels {
+		t.Fatal("expected streaming brick voxels to update to new voxel pointer")
 	}
 }
 

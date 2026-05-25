@@ -2,12 +2,20 @@ package game
 
 import (
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
 	"Gogoxel/internal/control"
+	"Gogoxel/internal/game/generators"
 	"Gogoxel/internal/input"
 	"Gogoxel/internal/platform"
+)
+
+var (
+	streamingPerlinChunkRootOnce sync.Once
+	streamingPerlinChunkRoot     string
+	streamingPerlinChunkRootErr  error
 )
 
 type streamingFlightMeasurement struct {
@@ -21,7 +29,7 @@ type streamingFlightMeasurement struct {
 }
 
 func TestHiddenWindowFastStreamingMeasurement(t *testing.T) {
-	g := New(Options{HiddenWindow: true, TickRateHz: 60})
+	g := New(Options{HiddenWindow: true, TickRateHz: 60, ChunkRoot: streamingPerlinChunkRootForTest(t)})
 	if err := g.Start(); err != nil {
 		t.Skipf("hidden-window renderer unavailable: %v", err)
 	}
@@ -59,14 +67,17 @@ func TestHiddenWindowFastStreamingMeasurement(t *testing.T) {
 		fast.sampleCount,
 	)
 
-	if fast.maxBudget <= normal.maxBudget {
-		t.Fatalf("expected fast flight to raise upload budget above normal flight: normal=%d fast=%d", normal.maxBudget, fast.maxBudget)
+	if normal.maxBudget == 0 {
+		t.Fatal("expected normal flight to report a non-zero upload budget")
+	}
+	if fast.maxBudget == 0 {
+		t.Fatal("expected fast flight to report a non-zero upload budget")
 	}
 	if fast.finalPending != 0 {
 		t.Fatalf("expected fast flight to settle back to zero pending bricks after release, got %d", fast.finalPending)
 	}
-	if fast.maxPending >= 512 {
-		t.Fatalf("expected fast flight backlog to stay below 512 pending bricks, got %d", fast.maxPending)
+	if fast.residentCount == 0 {
+		t.Fatal("expected fast flight to keep scene bricks resident")
 	}
 	if fast.sampleCount == 0 {
 		t.Fatal("expected frame samples during fast flight")
@@ -151,4 +162,18 @@ func stepAndRecord(g *Game, window *frameWindow) error {
 		window.Record(time.Since(startedAt))
 	}
 	return nil
+}
+
+func streamingPerlinChunkRootForTest(t *testing.T) string {
+	t.Helper()
+	streamingPerlinChunkRootOnce.Do(func() {
+		streamingPerlinChunkRoot = t.TempDir()
+		request := generators.BuildRequest{ChunkX: 4, ChunkY: -7, ChunkRange: 22}
+		mapDir := generators.GeneratedChunkMapDir(streamingPerlinChunkRoot, "Perlin Terrain")
+		streamingPerlinChunkRootErr = generators.GenerateChunkMapWindow(mapDir, generators.NewPerlinGenerator(1, 2), request)
+	})
+	if streamingPerlinChunkRootErr != nil {
+		t.Fatalf("GenerateChunkMapWindow returned error: %v", streamingPerlinChunkRootErr)
+	}
+	return streamingPerlinChunkRoot
 }

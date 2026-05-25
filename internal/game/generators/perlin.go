@@ -10,10 +10,11 @@ import (
 )
 
 const (
-	perlinChunkSize       uint    = 128
-	perlinTerrainScale    float64 = 1024
-	perlinMaxCaveDepth    int     = 48
-	perlinChunkCacheLimit         = 64
+	perlinChunkSize        uint    = 128
+	perlinTerrainScale     float64 = 1024
+	perlinMaxCaveDepth     int     = 48
+	perlinChunkCacheLimit          = 64
+	perlinChunkMapRevision         = "2026-05-24-terrain-v2"
 )
 
 type perlinGenerator struct {
@@ -70,7 +71,7 @@ const (
 
 var perlinPalette = [255]uint32{
 	0,
-	rgbaColor(0x24, 0x20, 0x1D),
+	rgbaColor(0x60, 0x67, 0x6F),
 	rgbaColor(0x60, 0x67, 0x6F),
 	rgbaColor(0x74, 0x59, 0x40),
 	rgbaColor(0x5A, 0x88, 0x47),
@@ -92,12 +93,13 @@ var perlinPaletteColors = []uint32{
 }
 
 type terrainColumn struct {
-	surface    int
-	seaLevel   int
-	moisture   float64
-	ruggedness float64
-	shoreline  float64
-	snowLine   int
+	surface      int
+	seaLevel     int
+	moisture     float64
+	ruggedness   float64
+	shoreline    float64
+	snowLine     int
+	surfaceSlope int
 }
 
 type perlinNoiseLayers struct {
@@ -169,6 +171,10 @@ func (p *perlinGenerator) ChunkSize() uint {
 	return p.sceneSize
 }
 
+func (p *perlinGenerator) ChunkMapRevision() string {
+	return fmt.Sprintf("%s:%d:%d:%d:%g", perlinChunkMapRevision, p.seed1, p.seed2, p.sceneSize, p.terrainScale)
+}
+
 func (p *perlinGenerator) BuildChunkSVO(svo *world.SVO, chunkX, chunkY int) error {
 	if svo == nil {
 		return fmt.Errorf("svo is required")
@@ -195,7 +201,7 @@ func (p *perlinGenerator) buildSVO(svo *world.SVO, request BuildRequest, sceneSi
 	chunkSize := p.ChunkSize()
 
 	svo.BuildTreeSparseVolumesWithMaterialBricks(sceneSize, perlinPaletteColors, func(addCube func(x, y, z, cubeSize uint, color uint32), addBrick func(x, y, z uint, voxels *[world.BrickVoxelCount]uint8)) {
-		request.ForEachChunk(chunkSize, func(chunkX, chunkY int, originX, originY uint) {
+		request.ForEachChunkByDistance(chunkSize, func(chunkX, chunkY int, originX, originY uint) {
 			chunk := p.chunkData(chunkX, chunkY, chunkSize, sceneScale, layers)
 			for _, cube := range chunk.cubes {
 				addCube(originX+uint(cube.localX), originY+uint(cube.localY), uint(cube.localZ), uint(cube.cubeSize), cube.color)
@@ -237,18 +243,18 @@ func (p *perlinGenerator) chunkData(chunkX, chunkY int, chunkSize uint, sceneSca
 
 func (p *perlinGenerator) buildChunkData(chunkX, chunkY int, chunkSize uint, sceneScale float64, layers perlinNoiseLayers) perlinChunkData {
 	brickSize := uint(world.BrickSize)
+	columnGridWidth := world.BrickSize + 2
 	worldChunkX := int64(chunkX) * int64(chunkSize)
 	worldChunkY := int64(chunkY) * int64(chunkSize)
 	data := perlinChunkData{}
-	var blockColumns [world.BrickSize * world.BrickSize]terrainColumn
+	var blockColumns [(world.BrickSize + 2) * (world.BrickSize + 2)]terrainColumn
 
 	for localChunkY := uint(0); localChunkY < chunkSize; localChunkY += brickSize {
 		for localChunkX := uint(0); localChunkX < chunkSize; localChunkX += brickSize {
-			maxColumnTop := 0
 			worldBlockX := worldChunkX + int64(localChunkX)
 			worldBlockY := worldChunkY + int64(localChunkY)
-			for localY := uint(0); localY < brickSize; localY++ {
-				for localX := uint(0); localX < brickSize; localX++ {
+			for localY := -1; localY <= world.BrickSize; localY++ {
+				for localX := -1; localX <= world.BrickSize; localX++ {
 					column := sampleTerrainColumn(
 						float64(worldBlockX+int64(localX)),
 						float64(worldBlockY+int64(localY)),
@@ -259,8 +265,15 @@ func (p *perlinGenerator) buildChunkData(chunkX, chunkY int, chunkSize uint, sce
 						layers.erosion,
 						layers.biome,
 					)
-					blockColumns[int(localY*brickSize+localX)] = column
-
+					blockColumns[(localY+1)*columnGridWidth+(localX+1)] = column
+				}
+			}
+			smoothedColumns := blockColumns
+			applyPerlinSurfaceSmoothing(blockColumns[:], smoothedColumns[:], columnGridWidth)
+			maxColumnTop := 0
+			for localY := 0; localY < world.BrickSize; localY++ {
+				for localX := 0; localX < world.BrickSize; localX++ {
+					column := blockColumns[(localY+1)*columnGridWidth+(localX+1)]
 					columnTop := column.surface
 					if column.seaLevel > columnTop {
 						columnTop = column.seaLevel
@@ -270,18 +283,19 @@ func (p *perlinGenerator) buildChunkData(chunkX, chunkY int, chunkSize uint, sce
 					}
 				}
 			}
+			applyPerlinSurfaceSlope(blockColumns[:], columnGridWidth)
 
 			for z0 := uint(0); z0 <= uint(maxColumnTop); z0 += brickSize {
-				if perlinBlockIsUniformWater(blockColumns[:], int(z0)) {
+				if perlinBlockIsUniformWater(blockColumns[:], columnGridWidth, int(z0)) {
 					data.cubes = append(data.cubes, perlinCachedCube{localX: uint16(localChunkX), localY: uint16(localChunkY), localZ: uint16(z0), cubeSize: uint16(brickSize), color: perlinPalette[perlinWaterVoxel]})
 					continue
 				}
-				if perlinBlockIsUniformDeepSolid(blockColumns[:], int(z0)) {
+				if perlinBlockIsUniformDeepSolid(blockColumns[:], columnGridWidth, int(z0)) {
 					data.cubes = append(data.cubes, perlinCachedCube{localX: uint16(localChunkX), localY: uint16(localChunkY), localZ: uint16(z0), cubeSize: uint16(brickSize), color: perlinPalette[perlinDeepVoxel]})
 					continue
 				}
 
-				voxels := buildPerlinMixedBlockMaterials(z0, worldBlockX, worldBlockY, sceneScale, blockColumns[:], layers)
+				voxels := buildPerlinMixedBlockMaterials(z0, worldBlockX, worldBlockY, sceneScale, blockColumns[:], columnGridWidth, layers)
 				if voxels == nil {
 					continue
 				}
@@ -298,20 +312,20 @@ func sampleTerrainColumn(x, y, sceneScale float64, continentNoise, warpNoise, ri
 	nx := (x - halfSpan) / sceneScale
 	ny := (y - halfSpan) / sceneScale
 
-	warpX := fbm2(warpNoise, nx*0.8+17.1, ny*0.8-11.4, 4, 2.0, 0.5) - 0.5
-	warpY := fbm2(warpNoise, nx*0.8-23.7, ny*0.8+9.2, 4, 2.0, 0.5) - 0.5
-	wx := nx + warpX*0.45
-	wy := ny + warpY*0.45
+	warpX := fbm2(warpNoise, nx*0.72+17.1, ny*0.72-11.4, 4, 2.0, 0.5) - 0.5
+	warpY := fbm2(warpNoise, nx*0.72-23.7, ny*0.72+9.2, 4, 2.0, 0.5) - 0.5
+	wx := nx + warpX*0.28
+	wy := ny + warpY*0.28
 
 	continentRaw := fbm2(continentNoise, wx*0.95, wy*0.95, 5, 2.0, 0.56)
 	shelf := smoothstep(0.38, 0.55, continentRaw)
 	continent := smoothstep(0.44, 0.61, continentRaw)
-	foothills := fbm2(continentNoise, wx*2.0+3.1, wy*2.0-7.7, 5, 2.05, 0.54)
+	foothills := fbm2(continentNoise, wx*1.7+3.1, wy*1.7-7.7, 5, 2.05, 0.54)
 	erosion := fbm2(erosionNoise, wx*5.2+12.4, wy*5.2-15.2, 4, 2.1, 0.52)
 	alpineDetail := fbm2(erosionNoise, wx*7.0-18.3, wy*7.0+14.1, 4, 2.2, 0.48)
 	moisture := fbm2(biomeNoise, wx*1.3-4.7, wy*1.3+9.1, 4, 2.0, 0.57)
 
-	ridgeRaw := fbm2(ridgeNoise, wx*3.4, wy*3.4, 5, 2.0, 0.58)
+	ridgeRaw := fbm2(ridgeNoise, wx*2.6, wy*2.6, 5, 2.0, 0.58)
 	ridge := 1.0 - math.Abs(ridgeRaw*2.0-1.0)
 	ridge = math.Pow(clamp01(ridge), 1.4)
 
@@ -323,8 +337,8 @@ func sampleTerrainColumn(x, y, sceneScale float64, continentNoise, warpNoise, ri
 
 	basePlateau := sceneScale * 0.05
 	rollingHills := continent * math.Pow(foothills, 1.15) * sceneScale * 0.09
-	mountainMass := math.Pow(ridge, 1.8) * math.Pow(continent, 1.35) * sceneScale * (0.14 + (1.0-erosion)*0.20)
-	microRelief := continent * alpineDetail * sceneScale * 0.035 * (0.40 + ridge*0.60)
+	mountainMass := math.Pow(ridge, 1.7) * math.Pow(continent, 1.25) * sceneScale * (0.10 + (1.0-erosion)*0.13)
+	microRelief := continent * alpineDetail * sceneScale * 0.018 * (0.35 + ridge*0.45)
 	basinCut := continent * (1.0 - erosion) * (0.50 + (1.0-moisture)*0.50) * sceneScale * 0.03
 
 	seaLevel := perlinSeaLevel(sceneScale)
@@ -364,38 +378,74 @@ func perlinSeaLevel(sceneScale float64) int {
 	return int(sceneScale * 0.20)
 }
 
-func perlinBlockIsUniformWater(columns []terrainColumn, blockBaseZ int) bool {
+func applyPerlinSurfaceSlope(columns []terrainColumn, stride int) {
+	if stride < 3 {
+		return
+	}
+	for y := 1; y < stride-1; y++ {
+		for x := 1; x < stride-1; x++ {
+			index := y*stride + x
+			surface := columns[index].surface
+			slope := absInt(surface - columns[index-1].surface)
+			slope = maxInt(slope, absInt(surface-columns[index+1].surface))
+			slope = maxInt(slope, absInt(surface-columns[index-stride].surface))
+			slope = maxInt(slope, absInt(surface-columns[index+stride].surface))
+			columns[index].surfaceSlope = slope
+		}
+	}
+}
+
+func applyPerlinSurfaceSmoothing(columns, source []terrainColumn, stride int) {
+	if stride < 3 || len(columns) != len(source) {
+		return
+	}
+	for y := 1; y < stride-1; y++ {
+		for x := 1; x < stride-1; x++ {
+			index := y*stride + x
+			smoothedSurface := source[index].surface*4 + source[index-1].surface + source[index+1].surface + source[index-stride].surface + source[index+stride].surface
+			columns[index].surface = (smoothedSurface + 4) / 8
+		}
+	}
+}
+
+func perlinBlockIsUniformWater(columns []terrainColumn, stride, blockBaseZ int) bool {
 	blockTop := blockBaseZ + world.BrickSize - 1
-	for _, column := range columns {
-		if blockBaseZ <= column.surface || blockTop > column.seaLevel {
-			return false
+	for localY := 1; localY <= world.BrickSize; localY++ {
+		for localX := 1; localX <= world.BrickSize; localX++ {
+			column := columns[localY*stride+localX]
+			if blockBaseZ <= column.surface || blockTop > column.seaLevel {
+				return false
+			}
 		}
 	}
 	return true
 }
 
-func perlinBlockIsUniformDeepSolid(columns []terrainColumn, blockBaseZ int) bool {
+func perlinBlockIsUniformDeepSolid(columns []terrainColumn, stride, blockBaseZ int) bool {
 	blockTop := blockBaseZ + world.BrickSize - 1
-	for _, column := range columns {
-		if blockTop > column.surface {
-			return false
-		}
-		depthFromSurface := column.surface - blockTop
-		if depthFromSurface <= perlinMaxCaveDepth {
-			return false
+	for localY := 1; localY <= world.BrickSize; localY++ {
+		for localX := 1; localX <= world.BrickSize; localX++ {
+			column := columns[localY*stride+localX]
+			if blockTop > column.surface {
+				return false
+			}
+			depthFromSurface := column.surface - blockTop
+			if depthFromSurface <= perlinMaxCaveDepth {
+				return false
+			}
 		}
 	}
 	return true
 }
 
-func buildPerlinMixedBlockMaterials(baseZ uint, worldBaseX, worldBaseY int64, sceneScale float64, columns []terrainColumn, layers perlinNoiseLayers) *[world.BrickVoxelCount]uint8 {
+func buildPerlinMixedBlockMaterials(baseZ uint, worldBaseX, worldBaseY int64, sceneScale float64, columns []terrainColumn, stride int, layers perlinNoiseLayers) *[world.BrickVoxelCount]uint8 {
 	voxels := &[world.BrickVoxelCount]uint8{}
 	hasMaterial := false
 	for localY := 0; localY < world.BrickSize; localY++ {
 		for localX := 0; localX < world.BrickSize; localX++ {
 			worldX := worldBaseX + int64(localX)
 			worldY := worldBaseY + int64(localY)
-			column := columns[localY*world.BrickSize+localX]
+			column := columns[(localY+1)*stride+(localX+1)]
 
 			for localZ := 0; localZ < world.BrickSize; localZ++ {
 				worldZ := int(baseZ) + localZ
@@ -447,6 +497,7 @@ func shouldCarveCave(x, y, z, sceneScale float64, column terrainColumn, warpNois
 
 func perlinMaterialAtDepth(z int, column terrainColumn) uint8 {
 	depthFromSurface := column.surface - z
+	steepColumn := column.surfaceSlope >= 2 || (column.surfaceSlope >= 1 && column.ruggedness >= 0.62)
 	if z <= column.seaLevel {
 		if z <= column.seaLevel-12 {
 			switch {
@@ -463,8 +514,18 @@ func perlinMaterialAtDepth(z int, column terrainColumn) uint8 {
 		}
 	}
 
+	if steepColumn && depthFromSurface < 16 {
+		if depthFromSurface < 10 {
+			return perlinCliffVoxel
+		}
+		return perlinRockVoxel
+	}
+
 	if z >= column.snowLine {
 		if depthFromSurface == 0 {
+			if steepColumn {
+				return perlinCliffVoxel
+			}
 			return perlinSnowVoxel
 		}
 		if depthFromSurface < 4 {
@@ -478,6 +539,9 @@ func perlinMaterialAtDepth(z int, column terrainColumn) uint8 {
 
 	switch {
 	case depthFromSurface == 0:
+		if steepColumn {
+			return perlinCliffVoxel
+		}
 		if column.ruggedness > 0.68 {
 			return perlinCliffVoxel
 		}
@@ -498,6 +562,26 @@ func perlinMaterialAtDepth(z int, column terrainColumn) uint8 {
 	default:
 		return perlinDeepVoxel
 	}
+}
+
+func maxInt(values ...int) int {
+	if len(values) == 0 {
+		return 0
+	}
+	maximum := values[0]
+	for _, value := range values[1:] {
+		if value > maximum {
+			maximum = value
+		}
+	}
+	return maximum
+}
+
+func absInt(value int) int {
+	if value < 0 {
+		return -value
+	}
+	return value
 }
 
 func fbm2(noise *perlinGenerator, x, y float64, octaves int, lacunarity, gain float64) float64 {

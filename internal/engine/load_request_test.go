@@ -71,6 +71,56 @@ func TestLoadGeneratorAtCentersCameraOnRequestedChunkWindow(t *testing.T) {
 	assertFloat32Close(t, camera.FovDeg, 60, 0.001)
 }
 
+func TestLoadGeneratorFocusesInitialCameraDrivenLoadInsideChunkWindow(t *testing.T) {
+	generator := &cameraDrivenTestGenerator{name: "Camera Terrain", chunkSize: 128}
+	core := NewCore(NewGeneratorCatalog([]generators.Generator{generator}), Config{})
+
+	if err := core.LoadGenerator("Camera Terrain"); err != nil {
+		t.Fatalf("LoadGenerator returned error: %v", err)
+	}
+
+	if len(generator.requests) != 1 {
+		t.Fatalf("build request count = %d, want 1", len(generator.requests))
+	}
+	request := generator.requests[0]
+	requestedSpan := float32(request.ExactSceneSize(generator.chunkSize))
+	wantCenterXY := float32(request.ChunkRange)*float32(generator.chunkSize) + float32(generator.chunkSize)*0.5
+	minBounds, maxBounds, ok := core.CurrentSVO().OccupiedBounds()
+	if !ok {
+		t.Fatal("expected occupied bounds")
+	}
+	wantCenterZ := (float32(minBounds[2]) + float32(maxBounds[2])) * 0.5
+
+	camera := core.Camera()
+	altitude := maxFloat32(float32(generator.chunkSize)*3, requestedSpan*0.22, 256)
+	assertFloat32Close(t, camera.Position[0], wantCenterXY-requestedSpan*0.25, 0.001)
+	assertFloat32Close(t, camera.Position[1], wantCenterXY-requestedSpan*0.25, 0.001)
+	assertFloat32Close(t, camera.Position[2], wantCenterZ+altitude, 0.001)
+	assertFloat32Close(t, camera.YawDeg, 45, 0.001)
+	assertFloat32Close(t, camera.PitchDeg, -24, 0.001)
+	assertFloat32Close(t, camera.FovDeg, 60, 0.001)
+}
+
+func TestCameraDrivenGeneratorDoesNotReloadWhileCameraIsStationary(t *testing.T) {
+	generator := &cameraDrivenTestGenerator{name: "Camera Terrain", chunkSize: 128}
+	core := NewCore(NewGeneratorCatalog([]generators.Generator{generator}), Config{})
+
+	if err := core.LoadGenerator("Camera Terrain"); err != nil {
+		t.Fatalf("LoadGenerator returned error: %v", err)
+	}
+	initialVersion := core.SceneVersion()
+	if err := core.StepTicks(3); err != nil {
+		t.Fatalf("StepTicks returned error: %v", err)
+	}
+
+	if got := len(generator.requests); got != 1 {
+		t.Fatalf("build request count = %d, want 1", got)
+	}
+	if got := core.SceneVersion(); got != initialVersion {
+		t.Fatalf("scene version = %d, want %d", got, initialVersion)
+	}
+}
+
 func TestLoadGeneratorUsesCurrentCameraForCameraDrivenGenerator(t *testing.T) {
 	generator := &cameraDrivenTestGenerator{name: "Camera Terrain", chunkSize: 16}
 	core := NewCore(NewGeneratorCatalog([]generators.Generator{generator}), Config{})
@@ -137,6 +187,24 @@ func TestLoadGeneratorUsesExpandedAutoRangeForHighAltitudeCamera(t *testing.T) {
 	chunkRange := cameraChunkRange(worldCamera, generator.chunkSize)
 	if got, want := generator.requests[0], (generators.BuildRequest{ChunkX: chunkLookahead(chunkRange), ChunkY: 0, ChunkRange: chunkRange}); got != want {
 		t.Fatalf("build request = %+v, want %+v", got, want)
+	}
+}
+
+func TestLoadGeneratorUsesExpandedAutoRangeForLowAltitudeCamera(t *testing.T) {
+	generator := &cameraDrivenTestGenerator{name: "Camera Terrain", chunkSize: 128}
+	core := NewCore(NewGeneratorCatalog([]generators.Generator{generator}), Config{})
+	worldCamera := platform.Camera{Position: [3]float32{128, 128, 64}, YawDeg: 45, PitchDeg: -10, FovDeg: 60}
+	core.SetCamera(worldCamera)
+
+	if err := core.LoadGenerator("Camera Terrain"); err != nil {
+		t.Fatalf("LoadGenerator returned error: %v", err)
+	}
+
+	if len(generator.requests) != 1 {
+		t.Fatalf("build request count = %d, want 1", len(generator.requests))
+	}
+	if got := generator.requests[0].ChunkRange; got < 1 {
+		t.Fatalf("chunk range = %d, want >= 1 for low-altitude explicit camera", got)
 	}
 }
 

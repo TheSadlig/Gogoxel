@@ -32,7 +32,7 @@ type translatedChunkScene struct {
 }
 
 type chunkSceneManager struct {
-	generator     generators.ChunkStreamGenerator
+	loader        generators.ChunkLoader
 	chunkSize     uint
 	paletteColors []uint32
 
@@ -48,14 +48,14 @@ type chunkSceneManager struct {
 	stopOnce sync.Once
 }
 
-func newChunkSceneManager(generator generators.ChunkStreamGenerator) *chunkSceneManager {
-	paletteColors := generator.ChunkPaletteColors()
+func newChunkSceneManager(loader generators.ChunkLoader) *chunkSceneManager {
+	paletteColors := loader.ChunkPaletteColors()
 	copiedPalette := make([]uint32, len(paletteColors))
 	copy(copiedPalette, paletteColors)
 
 	manager := &chunkSceneManager{
-		generator:     generator,
-		chunkSize:     generator.ChunkSize(),
+		loader:        loader,
+		chunkSize:     loader.ChunkSize(),
 		paletteColors: copiedPalette,
 		cachedChunks:  make(map[chunkCoord]*world.SVO),
 		dirty:         make(chan struct{}, 1),
@@ -350,8 +350,8 @@ func chunkCoordDistanceSq(coord chunkCoord, centerX, centerY int) int {
 
 func (m *chunkSceneManager) buildChunk(coord chunkCoord) (*world.SVO, error) {
 	chunk := world.NewSVO()
-	if err := m.generator.BuildChunkSVO(chunk, coord.x, coord.y); err != nil {
-		return nil, fmt.Errorf("building chunk (%d,%d): %w", coord.x, coord.y, err)
+	if err := m.loader.LoadChunkSVO(chunk, coord.x, coord.y); err != nil {
+		return nil, fmt.Errorf("loading chunk (%d,%d): %w", coord.x, coord.y, err)
 	}
 	return chunk, nil
 }

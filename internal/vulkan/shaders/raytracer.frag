@@ -198,10 +198,8 @@ bool raymarchBrick(
     uint entryFaceMask,
     bool hasEntryFaceMask,
     out uint hitMaterialID,
-    out vec3 hitNormal,
-    out uvec3 hitVoxelWorld
+    out vec3 hitNormal
 ) {
-    hitVoxelWorld = uvec3(0u);
     if (slot == 0u) {
         return false;
     }
@@ -248,14 +246,6 @@ bool raymarchBrick(
 
         uint materialID = texelFetch(brickPoolTexture, brickOriginPool + voxel, 0).r;
         if (materialID > 0u) {
-            // Gradient-based surface normal from 6 axis-aligned neighbours.
-            // Prefer a ±2 central-difference stencil: on slopes, adjacent surface
-            // voxels alternate between Z-up and side-face normals with a ±1 stencil
-            // (the "herringbone" artefact) because staircase steps are 1 voxel tall.
-            // A ±2 stencil spans across the step so both the top-of-step and
-            // side-of-step voxels see the same solid/air profile, giving consistent
-            // normals.  Fall back to ±1 when ±2 would reach outside the brick, and
-            // skip the axis entirely when even ±1 crosses the brick boundary.
             ivec3 brickMax = ivec3(int(BrickSize));
             vec3 grad = vec3(0.0);
             for (int axis = 0; axis < 3; axis++) {
@@ -281,22 +271,16 @@ bool raymarchBrick(
                         float sp = texelFetch(brickPoolTexture, brickOriginPool + vp1, 0).r > 0u ? 1.0 : 0.0;
                         grad[axis] = sn - sp;
                     }
-                    // else: skip axis — voxel is at brick boundary with no usable neighbour
                 }
             }
             if (dot(grad, grad) > 1e-4) {
                 hitNormal = normalize(grad);
-                // Ensure the normal faces toward the camera (against the ray).
                 if (dot(hitNormal, rd) > 0.0) hitNormal = -hitNormal;
             } else {
-                // Zero gradient (interior voxel, brick-edge voxel with uniform
-                // in-brick neighbourhood, or perfectly flat surface): fall back
-                // to DDA entry-face normal.
                 uint hitAxis = hasFaceMask ? resolveFaceAxis(faceMask, rd) : dominantAxis(rd);
                 hitNormal = axisNormal(hitAxis, rd);
             }
             hitMaterialID = materialID;
-            hitVoxelWorld = brickOriginWorld + uvec3(voxel);
             return true;
         }
 
@@ -414,74 +398,24 @@ vec4 raymarchVoxels(vec3 ro, vec3 rd) {
             if (isBrickLeaf(currentNode)) {
                 uint hitMaterialID = 0u;
                 vec3 hitNormal = vec3(0.0);
-                uvec3 hitVoxelWorld = uvec3(0u);
                 uvec3 brickOrigin = unmirrorNodeOrigin(currentOrigin, currentSize, sceneSize, raySign);
                 if (currentNode.childPointer == 0u) {
                     uint fallbackMaterialID = nodeMaterialID(currentNode);
                     if (fallbackMaterialID > 0u) {
-                        // Use a fixed sky-facing normal for all fallback bricks.
-                        // The SVO entry-face normal alternates between Z-face and side-faces
-                        // on slopes, creating a herringbone stripe artifact.  A stable
-                        // up-vector gives consistent base lighting; per-brick hash variation
-                        // then breaks up the uniform flat appearance.
-                        vec4 baseColor = shadeMaterial(fallbackMaterialID, vec3(0.0, 0.0, 1.0));
-                        float bx = float(brickOrigin.x >> 3u);
-                        float by = float(brickOrigin.y >> 3u);
-                        float bz = float(brickOrigin.z >> 3u);
-                        float h = fract(sin(dot(vec3(bx, by, bz), vec3(12.9898, 78.233, 37.719))) * 43758.5453);
-                        float variation = 0.82 + h * 0.36;
-                        return vec4(baseColor.rgb * variation, baseColor.a);
+                        uint hitAxis = hasFaceMask ? resolveFaceAxis(faceMask, rd) : dominantAxis(rd);
+                        return shadeMaterial(fallbackMaterialID, axisNormal(hitAxis, rd));
                     }
                     break;
                 }
-                if (raymarchBrick(currentNode.childPointer, brickOrigin, ro + rd * t, rd, faceMask, hasFaceMask, hitMaterialID, hitNormal, hitVoxelWorld)) {
-                    float hvx = float(hitVoxelWorld.x);
-                    float hvy = float(hitVoxelWorld.y);
-                    float hvz = float(hitVoxelWorld.z);
-                    // Two independent per-voxel hash values derived from world position.
-                    // hv0/hv1 perturb the surface normal in the tangent plane (±~11°).
-                    // Staircase voxels that share the same gradient-normal direction
-                    // (the herringbone root cause) end up with randomised normals and
-                    // therefore randomised lighting, breaking the visible stripe pattern.
-                    // hv2 scales final brightness (±20 %) for additional texture grain.
-                    float hv0 = fract(sin(dot(vec3(hvx,       hvy,       hvz),       vec3(12.9898, 78.233, 45.164))) * 43758.5453);
-                    float hv1 = fract(sin(dot(vec3(hvx + 7.3, hvy - 3.1, hvz + 11.7), vec3(39.346, 11.135, 83.155))) * 43758.5453);
-                    float hv2 = fract(sin(dot(vec3(hvx,       hvy,       hvz),        vec3(33.5,   67.1,   21.8)))   * 43758.5453);
-                    float pu = (hv0 - 0.5) * 0.40;  // ±0.20, ~11° max tangential offset
-                    float pv = (hv1 - 0.5) * 0.40;
-                    vec3 refUp   = abs(hitNormal.z) < 0.9 ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0);
-                    vec3 tang    = normalize(cross(refUp, hitNormal));
-                    vec3 bitang  = cross(hitNormal, tang);
-                    vec3 pertNormal = normalize(hitNormal + tang * pu + bitang * pv);
-                    vec4 color = shadeMaterial(hitMaterialID, pertNormal);
-                    return vec4(color.rgb * (0.80 + hv2 * 0.40), color.a);
+                if (raymarchBrick(currentNode.childPointer, brickOrigin, ro + rd * t, rd, faceMask, hasFaceMask, hitMaterialID, hitNormal)) {
+                    return shadeMaterial(hitMaterialID, hitNormal);
                 }
                 break;
             }
 
             if (isSolidLeaf(currentNode)) {
-                // For solid leaves (no per-voxel data), use the entry-face normal.
-                // When the ray hits from a side face (X/Y) but is travelling mostly
-                // downward, it likely struck a slope transition rather than a true
-                // vertical cliff — prefer Z-up to reduce coarse-scale herringbone.
-                uint hitAxis;
-                if (hasFaceMask) {
-                    uint faceAxis = resolveFaceAxis(faceMask, rd);
-                    bool sideHit = (faceAxis != AXIS_Z);
-                    bool steepRay = abs(rd.z) > max(abs(rd.x), abs(rd.y));
-                    hitAxis = (sideHit && steepRay) ? AXIS_Z : faceAxis;
-                } else {
-                    hitAxis = dominantAxis(rd);
-                }
-                vec4 slColor = shadeMaterial(nodeMaterialID(currentNode), axisNormal(hitAxis, rd));
-                // Per-voxel hash for solid leaves: derive position from the ray hit point.
-                // Match the ±20 % brightness range used for resident brick leaves.
-                vec3 hitPos = ro + rd * t;
-                float slx = floor(hitPos.x);
-                float sly = floor(hitPos.y);
-                float slz = floor(hitPos.z);
-                float slh = fract(sin(dot(vec3(slx, sly, slz), vec3(12.9898, 78.233, 45.164))) * 43758.5453);
-                return vec4(slColor.rgb * (0.80 + slh * 0.40), slColor.a);
+                uint hitAxis = hasFaceMask ? resolveFaceAxis(faceMask, rd) : dominantAxis(rd);
+                return shadeMaterial(nodeMaterialID(currentNode), axisNormal(hitAxis, rd));
             }
 
             if (currentNode.childPointer == 0u || childMask == 0u || currentSize <= 1.0) {

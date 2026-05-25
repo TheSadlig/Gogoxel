@@ -16,6 +16,7 @@ type HostOptions struct {
 	AutomationExposed bool
 	TickRateHz   int
 	ArtifactDir  string
+	ChunkRoot    string
 }
 
 type Host struct {

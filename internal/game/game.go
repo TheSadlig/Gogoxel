@@ -19,6 +19,7 @@ type Options struct {
 	Headless     bool
 	HiddenWindow bool
 	TickRateHz   int
+	ChunkRoot    string
 }
 
 type Game struct {
@@ -42,7 +43,7 @@ func New(options Options) *Game {
 	options = normalizeOptions(options)
 	return &Game{
 		options:             options,
-		core:                engine.NewCore(engine.DefaultGeneratorCatalog(), engine.Config{TickRateHz: options.TickRateHz}),
+		core:                engine.NewCore(engine.DefaultGeneratorCatalogWithChunkRoot(options.ChunkRoot), engine.Config{TickRateHz: options.TickRateHz}),
 		externalHeldActions: make(input.Snapshot),
 	}
 }
@@ -281,7 +282,14 @@ func (g *Game) Reset() error {
 }
 
 func (g *Game) LoadGenerator(name string) error {
-	return g.LoadGeneratorAt(engine.GeneratorLoadRequest{Name: name})
+	if err := g.core.LoadGenerator(name); err != nil {
+		return err
+	}
+	if g.renderer != nil {
+		return g.InitChunk()
+	}
+	g.loadedSceneVersion = g.core.SceneVersion()
+	return nil
 }
 
 func (g *Game) LoadGeneratorAt(request engine.GeneratorLoadRequest) error {

@@ -32,7 +32,11 @@ func NewGeneratorCatalog(items []generators.Generator) *GeneratorCatalog {
 }
 
 func DefaultGeneratorCatalog() *GeneratorCatalog {
-	return NewGeneratorCatalog(generators.DefaultGenerators())
+	return DefaultGeneratorCatalogWithChunkRoot("")
+	}
+
+func DefaultGeneratorCatalogWithChunkRoot(chunkRoot string) *GeneratorCatalog {
+	return NewGeneratorCatalog(generators.DefaultGeneratorsWithChunkRoot(chunkRoot))
 }
 
 func (c *GeneratorCatalog) Names() []string {

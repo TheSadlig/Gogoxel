@@ -111,3 +111,55 @@ func TestPerlinGeneratorCachesOverlappingChunks(t *testing.T) {
 		t.Fatal("expected overlapping chunk cache entry to be reused across builds")
 	}
 }
+
+func TestBuildRequestForEachChunkByDistanceStartsAtCenter(t *testing.T) {
+	request := BuildRequest{ChunkX: 5, ChunkY: -2, ChunkRange: 1}
+	type chunkCoord struct {
+		x int
+		y int
+	}
+	var visits []chunkCoord
+	request.ForEachChunkByDistance(16, func(chunkX, chunkY int, _originX, _originY uint) {
+		visits = append(visits, chunkCoord{x: chunkX, y: chunkY})
+	})
+	if got, want := len(visits), 9; got != want {
+		t.Fatalf("visit count = %d, want %d", got, want)
+	}
+	if got, want := visits[0], (chunkCoord{x: 5, y: -2}); got != want {
+		t.Fatalf("first chunk = %+v, want %+v", got, want)
+	}
+	previousDistance := -1
+	for index, visit := range visits {
+		dx := visit.x - request.ChunkX
+		dy := visit.y - request.ChunkY
+		distance := dx*dx + dy*dy
+		if distance < previousDistance {
+			t.Fatalf("visit %d distance = %d, previous = %d", index, distance, previousDistance)
+		}
+		previousDistance = distance
+	}
+}
+
+func TestPerlinMaterialAtDepthUsesCliffOnSteepSnowSurface(t *testing.T) {
+	column := terrainColumn{surface: 220, seaLevel: 64, snowLine: 180, ruggedness: 0.65, surfaceSlope: 1}
+
+	if got, want := perlinMaterialAtDepth(column.surface, column), perlinCliffVoxel; got != want {
+		t.Fatalf("steep snow surface material = %d, want %d", got, want)
+	}
+}
+
+func TestPerlinMaterialAtDepthKeepsSnowOnFlatSnowSurface(t *testing.T) {
+	column := terrainColumn{surface: 220, seaLevel: 64, snowLine: 180, ruggedness: 0.65, surfaceSlope: 0}
+
+	if got, want := perlinMaterialAtDepth(column.surface, column), perlinSnowVoxel; got != want {
+		t.Fatalf("flat snow surface material = %d, want %d", got, want)
+	}
+}
+
+func TestPerlinMaterialAtDepthUsesCliffOnVerySteepGrassSurface(t *testing.T) {
+	column := terrainColumn{surface: 140, seaLevel: 64, snowLine: 220, moisture: 0.5, ruggedness: 0.45, surfaceSlope: 2}
+
+	if got, want := perlinMaterialAtDepth(column.surface, column), perlinCliffVoxel; got != want {
+		t.Fatalf("steep grass surface material = %d, want %d", got, want)
+	}
+}

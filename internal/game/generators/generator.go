@@ -2,6 +2,7 @@ package generators
 
 import (
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"Gogoxel/internal/world"
@@ -24,11 +25,23 @@ type CameraDrivenGenerator interface {
 	CameraDriven() bool
 }
 
-type ChunkStreamGenerator interface {
+type ChunkGenerator interface {
 	CameraDrivenGenerator
 	ChunkPaletteColors() []uint32
 	BuildChunkSVO(svo *world.SVO, chunkX, chunkY int) error
 }
+
+type ChunkLoader interface {
+	CameraDrivenGenerator
+	ChunkPaletteColors() []uint32
+	LoadChunkSVO(svo *world.SVO, chunkX, chunkY int) error
+}
+
+type ChunkMapRevisioner interface {
+	ChunkMapRevision() string
+}
+
+type ChunkStreamGenerator = ChunkGenerator
 
 type svoSnapshot struct {
 	snapshot world.Snapshot
@@ -98,6 +111,47 @@ func (r BuildRequest) ForEachChunk(chunkSize uint, emit func(chunkX, chunkY int,
 	}
 }
 
+func (r BuildRequest) ForEachChunkByDistance(chunkSize uint, emit func(chunkX, chunkY int, originX, originY uint)) {
+	if emit == nil || chunkSize == 0 {
+		return
+	}
+	type chunkVisit struct {
+		chunkX  int
+		chunkY  int
+		originX uint
+		originY uint
+	}
+
+	r = r.Normalized()
+	visits := make([]chunkVisit, 0, r.ChunkSpan()*r.ChunkSpan())
+	r.ForEachChunk(chunkSize, func(chunkX, chunkY int, originX, originY uint) {
+		visits = append(visits, chunkVisit{
+			chunkX:  chunkX,
+			chunkY:  chunkY,
+			originX: originX,
+			originY: originY,
+		})
+	})
+	sort.Slice(visits, func(i, j int) bool {
+		deltaIX := visits[i].chunkX - r.ChunkX
+		deltaIY := visits[i].chunkY - r.ChunkY
+		deltaJX := visits[j].chunkX - r.ChunkX
+		deltaJY := visits[j].chunkY - r.ChunkY
+		distanceI := deltaIX*deltaIX + deltaIY*deltaIY
+		distanceJ := deltaJX*deltaJX + deltaJY*deltaJY
+		if distanceI != distanceJ {
+			return distanceI < distanceJ
+		}
+		if visits[i].chunkY != visits[j].chunkY {
+			return visits[i].chunkY < visits[j].chunkY
+		}
+		return visits[i].chunkX < visits[j].chunkX
+	})
+	for _, visit := range visits {
+		emit(visit.chunkX, visit.chunkY, visit.originX, visit.originY)
+	}
+}
+
 func snapshot(svo *world.SVO) svoSnapshot {
 	return svoSnapshot{snapshot: svo.Snapshot()}
 }
@@ -126,9 +180,22 @@ func (c *snapshotCache) store(source *world.SVO, request BuildRequest) {
 }
 
 func DefaultGenerators() []Generator {
+	return DefaultGeneratorsWithChunkRoot("")
+}
+
+func DefaultGeneratorsWithChunkRoot(chunkRoot string) []Generator {
 	generators := []Generator{
 		NewCubeGenerator("Cube", 128, 64, rgbaColor(0xE2, 0x55, 0x4F)),
-		NewPerlinGenerator(1, 2),
+	}
+	chunkRoot = strings.TrimSpace(chunkRoot)
+	if chunkRoot != "" {
+		for _, generator := range DefaultChunkGenerators() {
+			loader, err := OpenGeneratedChunkMap(GeneratedChunkMapDir(chunkRoot, generator.Name()))
+			if err != nil {
+				continue
+			}
+			generators = append(generators, loader)
+		}
 	}
 
 	for _, path := range []string{
@@ -144,6 +211,21 @@ func DefaultGenerators() []Generator {
 	}
 
 	return generators
+}
+
+func DefaultChunkGenerators() []ChunkGenerator {
+	return []ChunkGenerator{
+		NewPerlinGenerator(1, 2),
+	}
+}
+
+func LookupDefaultChunkGenerator(name string) (ChunkGenerator, bool) {
+	for _, generator := range DefaultChunkGenerators() {
+		if generator.Name() == name {
+			return generator, true
+		}
+	}
+	return nil, false
 }
 
 func modelDisplayName(path string) string {

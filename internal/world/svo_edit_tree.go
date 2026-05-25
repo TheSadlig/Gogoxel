@@ -87,7 +87,7 @@ func (s *SVO) rebuildEditableNode(nodeIndex uint32, nodeSize uint) (*stagingNode
 		editable.brickIndex = brickIndex
 		voxelsCopy := *brick.Voxels
 		editable.brickVoxels = &voxelsCopy
-		editable.setBrickLeaf(0)
+		editable.setBrickLeaf(0, dominantBrickMaterial(editable.brickVoxels))
 		return editable, true
 	}
 	if node.isSolidLeaf() {
@@ -164,7 +164,7 @@ func (s *SVO) assignEditableBrickIndices(node *stagingNode, nodeSize, originX, o
 		node.brickIndex = len(s.bricks)
 		s.bricks = append(s.bricks, brick)
 		node.brickVoxels = s.bricks[node.brickIndex].Voxels
-		node.setBrickLeaf(0)
+		node.setBrickLeaf(0, dominantBrickMaterial(node.brickVoxels))
 		node.tempChildren = [8]*stagingNode{}
 		return
 	}
@@ -236,7 +236,7 @@ func (s *SVO) editVoxelNode(node *stagingNode, originX, originY, originZ, nodeSi
 			voxels := &[BrickVoxelCount]uint8{}
 			voxels[brickVoxelIndex(int(x-originX), int(y-originY), int(z-originZ))] = materialID
 			leaf.brickVoxels = voxels
-			leaf.setBrickLeaf(0)
+			leaf.setBrickLeaf(0, dominantBrickMaterial(voxels))
 			return leaf, true
 		}
 		node = newStagingNode()
@@ -276,7 +276,7 @@ func (s *SVO) editVoxelNode(node *stagingNode, originX, originY, originZ, nodeSi
 			node.tempChildren = [8]*stagingNode{}
 			node.brickIndex = -1
 			node.brickVoxels = voxels
-			node.setBrickLeaf(0)
+			node.setBrickLeaf(0, dominantBrickMaterial(voxels))
 			return node, true
 		}
 		node = expandSolidNode(currentMaterialID)
@@ -293,7 +293,7 @@ func (s *SVO) editVoxelNode(node *stagingNode, originX, originY, originZ, nodeSi
 		node.tempChildren = [8]*stagingNode{}
 		node.brickIndex = -1
 		node.brickVoxels = voxels
-		node.setBrickLeaf(0)
+		node.setBrickLeaf(0, dominantBrickMaterial(voxels))
 		return node, true
 	}
 
@@ -359,7 +359,7 @@ func (s *SVO) normalizeEditableNode(node *stagingNode, nodeSize uint) *stagingNo
 			return node
 		}
 		node.tempChildren = [8]*stagingNode{}
-		node.setBrickLeaf(0)
+		node.setBrickLeaf(0, dominantBrickMaterial(node.brickVoxels))
 		return node
 	}
 	if node.isSolidLeaf() {
@@ -406,7 +406,7 @@ func (s *SVO) normalizeEditableNode(node *stagingNode, nodeSize uint) *stagingNo
 		node.tempChildren = [8]*stagingNode{}
 		node.brickIndex = -1
 		node.brickVoxels = voxels
-		node.setBrickLeaf(0)
+		node.setBrickLeaf(0, dominantBrickMaterial(voxels))
 		return s.normalizeEditableNode(node, nodeSize)
 	}
 	if canCollapse && activeCount == 8 {

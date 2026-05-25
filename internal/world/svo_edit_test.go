@@ -40,6 +40,9 @@ func TestLastEditUsedFullRebuildFalseForIncrementalBrickEdit(t *testing.T) {
 	if svo.LastEditUsedFullRebuild() {
 		t.Fatal("expected mixed-brick edit to stay incremental")
 	}
+	if got := svo.LastEditTouchedBrickIndices(); len(got) != 1 || got[0] != 0 {
+		t.Fatalf("expected touched brick indices [0], got %v", got)
+	}
 }
 
 func TestBuildTreeSparseVolumesWithBricksKeepsMixedBrickEditsIncremental(t *testing.T) {

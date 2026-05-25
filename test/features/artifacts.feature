@@ -41,7 +41,7 @@ Feature: Renderer artifacts over automation gRPC
     And the simulation tick rate is 60 Hz
     And the camera is set to x -160 y 224 z 320 yaw 45 pitch -24 fov 60
     And the generator "Perlin Terrain" is loaded
-    And the automation session becomes render-ready
+    And the automation session becomes streaming-settled
     When I capture the screenshot artifact "perlin-low-altitude"
     Then the world size should be at least 384
     And the screenshot artifact should contain at least 10 percent non-background pixels

@@ -39,6 +39,9 @@ func (h *Host) LoadGenerator(ctx context.Context, request session.GeneratorLoadR
 			"chunk_y":     request.ChunkY,
 			"chunk_range": request.ChunkRange,
 		})
+		if request.ChunkRange == 0 {
+			return nil, state.game.LoadGenerator(request.Name)
+		}
 		return nil, state.game.LoadGeneratorAt(engine.GeneratorLoadRequest{
 			Name:       request.Name,
 			ChunkX:     request.ChunkX,

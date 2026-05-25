@@ -21,6 +21,7 @@ import (
 	"time"
 
 	automationclient "Gogoxel/internal/automation/client"
+	"Gogoxel/internal/game/generators"
 	"Gogoxel/internal/platform"
 	"Gogoxel/internal/session"
 
@@ -62,44 +63,47 @@ type sessionMode string
 type sessionRunMode string
 
 const (
-	sessionModeHeadless     sessionMode = "headless"
-	sessionModeHiddenWindow sessionMode = "hidden-window"
+	sessionModeHeadless     sessionMode    = "headless"
+	sessionModeHiddenWindow sessionMode    = "hidden-window"
 	sessionRunModeManual    sessionRunMode = "manual"
 	sessionRunModeLive      sessionRunMode = "live"
 
-	defaultRPCDeadline = 10 * time.Second
+	defaultRPCDeadline   = 10 * time.Second
 	generatorLoadTimeout = 60 * time.Second
-	startupTimeout     = 20 * time.Second
-	shutdownTimeout    = 10 * time.Second
+	startupTimeout       = 20 * time.Second
+	shutdownTimeout      = 10 * time.Second
 )
 
 var (
-	binaryBuildOnce sync.Once
-	builtBinaryPath string
-	builtBinaryErr  error
+	binaryBuildOnce  sync.Once
+	builtBinaryPath  string
+	builtBinaryErr   error
+	bddChunkRootOnce sync.Once
+	bddChunkRootPath string
+	bddChunkRootErr  error
 )
 
 type scenarioHarness struct {
-	driver         automationDriver
-	command        *exec.Cmd
-	waitCh         chan error
-	commandOutput  bytes.Buffer
-	artifactDir    string
-	artifactSubdir string
-	lastCamera     platform.Camera
-	lastReadiness  session.Readiness
-	lastMetrics    session.MetricsSnapshot
-	lastStep       session.StepResult
-	lastEdit       session.CursorEditResult
-	lastScreenshot session.ArtifactInfo
-	lastTrace      session.ArtifactInfo
+	driver              automationDriver
+	command             *exec.Cmd
+	waitCh              chan error
+	commandOutput       bytes.Buffer
+	artifactDir         string
+	artifactSubdir      string
+	lastCamera          platform.Camera
+	lastReadiness       session.Readiness
+	lastMetrics         session.MetricsSnapshot
+	lastStep            session.StepResult
+	lastEdit            session.CursorEditResult
+	lastScreenshot      session.ArtifactInfo
+	lastTrace           session.ArtifactInfo
 	lastMetricsArtifact string
-	mode           sessionMode
-	runMode        sessionRunMode
-	address        string
-	cleanupArtifacts bool
-	autoTraceName  string
-	closed         bool
+	mode                sessionMode
+	runMode             sessionRunMode
+	address             string
+	cleanupArtifacts    bool
+	autoTraceName       string
+	closed              bool
 }
 
 func InitializeScenario(ctx *godog.ScenarioContext) {
@@ -134,9 +138,11 @@ func InitializeScenario(ctx *godog.ScenarioContext) {
 	ctx.Step(`^I advance the simulation by (\d+) frames$`, harness.advanceFrames)
 	ctx.Step(`^the automation session becomes render-ready$`, harness.waitForRendererReady)
 	ctx.Step(`^the automation session becomes streaming-settled$`, harness.waitForStreamingSettled)
+	ctx.Step(`^the rendered view should remain visually stable for (\d+) frames$`, harness.expectRenderedViewStable)
 	ctx.Step(`^I reset the metrics window$`, harness.resetMetricsWindow)
 	ctx.Step(`^the camera x position should be approximately (-?\d+(?:\.\d+)?) within (\d+(?:\.\d+)?)$`, harness.expectCameraX)
 	ctx.Step(`^the camera x position should eventually be above (-?\d+(?:\.\d+)?) within (\d+(?:\.\d+)?) seconds$`, harness.expectCameraXEventuallyAbove)
+	ctx.Step(`^the world size should be at least (\d+)$`, harness.expectWorldSizeAtLeast)
 	ctx.Step(`^the metrics window should contain at least (\d+) samples$`, harness.expectMetricSamples)
 	ctx.Step(`^the metrics window should eventually contain at least (\d+) samples within (\d+(?:\.\d+)?) seconds$`, harness.expectMetricSamplesEventually)
 	ctx.Step(`^the current scene should contain at least (\d+) bricks$`, harness.expectBrickCountAtLeast)
@@ -209,12 +215,17 @@ func (h *scenarioHarness) startSession(mode sessionMode, runMode sessionRunMode)
 	if err != nil {
 		return err
 	}
+	chunkRoot, err := bddChunkRoot()
+	if err != nil {
+		cleanupScenarioArtifacts(artifactDir, cleanupArtifacts)
+		return err
+	}
 	address, err := reserveLoopbackAddress()
 	if err != nil {
 		cleanupScenarioArtifacts(artifactDir, cleanupArtifacts)
 		return err
 	}
-	args := []string{"--artifact-dir", artifactDir}
+	args := []string{"--artifact-dir", artifactDir, "--chunk-root", chunkRoot}
 	switch runMode {
 	case sessionRunModeManual:
 		args = append(args, "--automation", "--listen", address)
@@ -518,6 +529,17 @@ func (h *scenarioHarness) expectMetricSamples(minimum int) error {
 	return nil
 }
 
+func (h *scenarioHarness) expectWorldSizeAtLeast(minimum int) error {
+	metrics, err := h.refreshMetrics()
+	if err != nil {
+		return err
+	}
+	if got := int(metrics.WorldSize); got < minimum {
+		return fmt.Errorf("expected world size >= %d, got %d", minimum, got)
+	}
+	return nil
+}
+
 func (h *scenarioHarness) expectMetricSamplesEventually(minimum int, timeoutSeconds float64) error {
 	deadline := time.Now().Add(time.Duration(timeoutSeconds * float64(time.Second)))
 	for time.Now().Before(deadline) {
@@ -718,6 +740,89 @@ func (h *scenarioHarness) expectScreenshotContainsNonBackgroundPixels(minimumPer
 	return nil
 }
 
+func (h *scenarioHarness) expectRenderedViewStable(frames int) error {
+	if frames <= 0 {
+		return fmt.Errorf("frames must be positive")
+	}
+	previousPath, err := h.captureComparisonScreenshot("stability-frame-000")
+	if err != nil {
+		return err
+	}
+	for frame := 1; frame <= frames; frame++ {
+		if err := h.advanceFrames(1); err != nil {
+			return err
+		}
+		currentPath, err := h.captureComparisonScreenshot(fmt.Sprintf("stability-frame-%03d", frame))
+		if err != nil {
+			return err
+		}
+		diffPercent, err := screenshotDiffPercent(previousPath, currentPath)
+		if err != nil {
+			return err
+		}
+		if diffPercent > 0.10 {
+			return fmt.Errorf("expected rendered view to remain stable across consecutive frames, but %s and %s differ by %.2f%%", filepath.Base(previousPath), filepath.Base(currentPath), diffPercent)
+		}
+		previousPath = currentPath
+	}
+	return nil
+}
+
+func (h *scenarioHarness) captureComparisonScreenshot(name string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), startupTimeout)
+	defer cancel()
+	artifact, err := h.driver.CaptureScreenshot(ctx, name)
+	if err != nil {
+		return "", err
+	}
+	h.lastScreenshot = artifact
+	if strings.TrimSpace(artifact.Path) == "" {
+		return "", fmt.Errorf("comparison screenshot %q did not produce a path", name)
+	}
+	return artifact.Path, nil
+}
+
+func screenshotDiffPercent(leftPath, rightPath string) (float64, error) {
+	leftFile, err := os.Open(leftPath)
+	if err != nil {
+		return 0, err
+	}
+	defer leftFile.Close()
+	rightFile, err := os.Open(rightPath)
+	if err != nil {
+		return 0, err
+	}
+	defer rightFile.Close()
+
+	leftImage, err := png.Decode(leftFile)
+	if err != nil {
+		return 0, fmt.Errorf("decoding screenshot %s: %w", leftPath, err)
+	}
+	rightImage, err := png.Decode(rightFile)
+	if err != nil {
+		return 0, fmt.Errorf("decoding screenshot %s: %w", rightPath, err)
+	}
+	leftBounds := leftImage.Bounds()
+	rightBounds := rightImage.Bounds()
+	if leftBounds.Dx() != rightBounds.Dx() || leftBounds.Dy() != rightBounds.Dy() {
+		return 0, fmt.Errorf("screenshot dimensions differ: %s is %dx%d, %s is %dx%d", leftPath, leftBounds.Dx(), leftBounds.Dy(), rightPath, rightBounds.Dx(), rightBounds.Dy())
+	}
+
+	differentPixels := 0
+	totalPixels := leftBounds.Dx() * leftBounds.Dy()
+	for y := 0; y < leftBounds.Dy(); y++ {
+		for x := 0; x < leftBounds.Dx(); x++ {
+			if leftImage.At(leftBounds.Min.X+x, leftBounds.Min.Y+y) != rightImage.At(rightBounds.Min.X+x, rightBounds.Min.Y+y) {
+				differentPixels++
+			}
+		}
+	}
+	if totalPixels == 0 {
+		return 0, fmt.Errorf("screenshots have empty bounds")
+	}
+	return float64(differentPixels) * 100 / float64(totalPixels), nil
+}
+
 func pixelDiffersFromBackground(a, b color.Color) bool {
 	ar, ag, ab, aa := a.RGBA()
 	br, bg, bb, ba := b.RGBA()
@@ -837,6 +942,27 @@ func gogoxelBinaryPath() (string, error) {
 		}
 	})
 	return builtBinaryPath, builtBinaryErr
+}
+
+func bddChunkRoot() (string, error) {
+	bddChunkRootOnce.Do(func() {
+		root, err := os.MkdirTemp("", "gogoxel-bdd-chunks-")
+		if err != nil {
+			bddChunkRootErr = err
+			return
+		}
+		mapDir := generators.GeneratedChunkMapDir(root, "Perlin Terrain")
+		request := generators.BuildRequest{ChunkX: 4, ChunkY: -7, ChunkRange: 34}
+		if err := generators.GenerateChunkMapWindow(mapDir, generators.NewPerlinGenerator(1, 2), request); err != nil {
+			bddChunkRootErr = err
+			return
+		}
+		bddChunkRootPath = root
+	})
+	if bddChunkRootErr != nil {
+		return "", bddChunkRootErr
+	}
+	return bddChunkRootPath, nil
 }
 
 func reserveLoopbackAddress() (string, error) {

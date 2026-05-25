@@ -14,22 +14,32 @@ import (
 type ChunkResources struct {
 	DescriptorSet vk.DescriptorSet
 
-	device             vk.Device
-	descriptorPool     vk.DescriptorPool
-	buffer             vk.Buffer
-	bufferMemory       vk.DeviceMemory
-	bufferBytes        vk.DeviceSize
-	brickPool          *brickPool
-	ownsBrickPool      bool
-	streamer           *brickStreamer
-	pendingWords       []uint32
-	pendingBricks      []world.Brick
-	pendingSceneOrigin [3]int32
-	camera             platform.Camera
-	cameraEverSet      bool
+	device               vk.Device
+	descriptorPool       vk.DescriptorPool
+	buffer               vk.Buffer
+	bufferMemory         vk.DeviceMemory
+	bufferBytes          vk.DeviceSize
+	brickPool            *brickPool
+	ownsBrickPool        bool
+	streamer             *brickStreamer
+	pendingWords         []uint32
+	pendingBricks        []world.Brick
+	pendingBrickIndices  []int
+	pendingPaletteWords  []uint32
+	pendingPaletteOffset vk.DeviceSize
+	pendingWordPatches   []bufferWordPatch
+	pendingSceneOrigin   [3]int32
+	sceneOrigin          [3]int32
+	camera               platform.Camera
+	cameraEverSet        bool
 }
 
 const minChunkStorageBufferBytes vk.DeviceSize = 64 * 1024
+
+type bufferWordPatch struct {
+	dstOffset vk.DeviceSize
+	value     uint32
+}
 
 func (r *Renderer) CreateChunkResourcesFromData(chunkBindings *ChunkBindings, data []uint8, palette [255]uint32, width, height, depth uint32) (*ChunkResources, error) {
 	if len(data) == 0 {
@@ -97,6 +107,7 @@ func (r *Renderer) CreateChunkResourcesFromSVO(chunkBindings *ChunkBindings, svo
 	if chunk.streamer != nil {
 		chunk.streamer.setSceneOrigin(sceneOrigin)
 	}
+	chunk.sceneOrigin = sceneOrigin
 
 	return chunk, nil
 }
@@ -283,43 +294,69 @@ func (chunk *ChunkResources) QueueSceneUpdate(svo *world.SVO, sceneOrigin [3]int
 	if size > chunk.bufferBytes {
 		return false
 	}
+	if sceneOrigin == chunk.sceneOrigin && chunk.streamer != nil {
+		brickIndices := svo.LastEditTouchedBrickIndices()
+		if len(brickIndices) > 0 && chunk.queueIncrementalSceneUpdate(svo, words, brickIndices) {
+			chunk.pendingSceneOrigin = sceneOrigin
+			return true
+		}
+	}
 	chunk.pendingWords = words
 	chunk.pendingBricks = svo.BricksRef()
 	chunk.pendingSceneOrigin = sceneOrigin
+	chunk.pendingBrickIndices = nil
+	chunk.pendingPaletteWords = nil
+	chunk.pendingPaletteOffset = 0
+	chunk.pendingWordPatches = nil
 	return true
 }
 
 func (chunk *ChunkResources) RecordSceneUpdate(frame *Frame) error {
-	if chunk == nil || frame == nil || len(chunk.pendingWords) == 0 {
+	if chunk == nil || frame == nil {
 		return nil
 	}
-	size := vk.DeviceSize(len(chunk.pendingWords) * 4)
-	stagingBuffer, stagingOffset, dst, release, err := frame.renderer.stagingAllocForUpload(frame.FrameSlot, size, 4)
-	if err != nil {
-		return fmt.Errorf("allocating staging space for scene update: %w", err)
+	if len(chunk.pendingWords) == 0 && len(chunk.pendingWordPatches) == 0 && len(chunk.pendingPaletteWords) == 0 {
+		return nil
 	}
-	if release != nil {
-		frame.renderer.deferFrameRelease(frame.FrameSlot, release)
+
+	if len(chunk.pendingWords) > 0 {
+		size := vk.DeviceSize(len(chunk.pendingWords) * 4)
+		stagingBuffer, stagingOffset, dst, release, err := frame.renderer.stagingAllocForUpload(frame.FrameSlot, size, 4)
+		if err != nil {
+			return fmt.Errorf("allocating staging space for scene update: %w", err)
+		}
+		if release != nil {
+			frame.renderer.deferFrameRelease(frame.FrameSlot, release)
+		}
+		copy(unsafe.Slice((*uint32)(dst), len(chunk.pendingWords)), chunk.pendingWords)
+		regions := []vk.BufferCopy{{SrcOffset: stagingOffset, DstOffset: 0, Size: size}}
+		vk.CmdCopyBuffer(frame.CommandBuffer, stagingBuffer, chunk.buffer, 1, regions)
+		// The scene upload resets every brick-leaf childPtr in chunk.buffer to the
+		// CPU snapshot value (usually 0). Any later vkCmdFillBuffer pointer patch in
+		// this command buffer, including patches emitted by RecordStreaming for new
+		// bricks, must execute after this copy or edited brick regions can render as
+		// missing/stale 8x8 patches.
+		frame.renderer.recordBufferTransferBarrier(frame.CommandBuffer, chunk.buffer, chunk.bufferBytes)
 	}
-	copy(unsafe.Slice((*uint32)(dst), len(chunk.pendingWords)), chunk.pendingWords)
-	regions := []vk.BufferCopy{{SrcOffset: stagingOffset, DstOffset: 0, Size: size}}
-	vk.CmdCopyBuffer(frame.CommandBuffer, stagingBuffer, chunk.buffer, 1, regions)
-	// The scene upload resets every brick-leaf childPtr in chunk.buffer to the
-	// CPU snapshot value (usually 0). Any later vkCmdFillBuffer pointer patch in
-	// this command buffer, including patches emitted by RecordStreaming for new
-	// bricks, must execute after this copy or edited brick regions can render as
-	// missing/stale 8x8 patches.
-	frame.renderer.recordBufferTransferBarrier(frame.CommandBuffer, chunk.buffer, chunk.bufferBytes)
+
+	if err := chunk.recordBufferWordPatches(frame, chunk.pendingWordPatches); err != nil {
+		return err
+	}
+	if err := chunk.recordBufferWordSlice(frame, chunk.pendingPaletteOffset, chunk.pendingPaletteWords); err != nil {
+		return err
+	}
 
 	plan := sceneUpdatePlan{}
-	if chunk.streamer != nil {
+	if len(chunk.pendingWords) > 0 && chunk.streamer != nil {
 		plan = chunk.streamer.replaceSceneBricks(chunk.brickPool, chunk.pendingSceneOrigin, chunk.pendingBricks)
-	} else if len(chunk.pendingBricks) > 0 {
+	} else if len(chunk.pendingWords) > 0 && len(chunk.pendingBricks) > 0 {
 		chunk.streamer = newBrickStreamer(chunk.pendingBricks)
 		chunk.streamer.setSceneOrigin(chunk.pendingSceneOrigin)
 		if chunk.streamer != nil && chunk.cameraEverSet {
 			chunk.streamer.primeCamera(chunk.camera)
 		}
+	} else if chunk.streamer != nil && len(chunk.pendingBrickIndices) > 0 {
+		plan.uploads = chunk.streamer.updateSceneBricks(chunk.pendingBricks, chunk.pendingBrickIndices)
 	}
 
 	if len(plan.uploads) > 0 {
@@ -354,8 +391,92 @@ func (chunk *ChunkResources) RecordSceneUpdate(frame *Frame) error {
 	}
 	frame.renderer.recordBufferShaderBarrier(frame.CommandBuffer, chunk.buffer, chunk.bufferBytes)
 
+	chunk.sceneOrigin = chunk.pendingSceneOrigin
 	chunk.pendingWords = nil
 	chunk.pendingBricks = nil
+	chunk.pendingBrickIndices = nil
+	chunk.pendingPaletteWords = nil
+	chunk.pendingPaletteOffset = 0
+	chunk.pendingWordPatches = nil
+	return nil
+}
+
+func (chunk *ChunkResources) queueIncrementalSceneUpdate(svo *world.SVO, words []uint32, brickIndices []int) bool {
+	if chunk == nil || svo == nil || len(words) == 0 || len(brickIndices) == 0 {
+		return false
+	}
+	nodeCount := svo.NodeCount()
+	paletteOffset := svoHeaderWordCount + nodeCount*2
+	if paletteOffset+world.PaletteSize > len(words) {
+		return false
+	}
+	bricks := svo.BricksRef()
+	patches := make([]bufferWordPatch, 0, len(brickIndices))
+	for _, brickIndex := range brickIndices {
+		if brickIndex < 0 || brickIndex >= len(bricks) {
+			return false
+		}
+		nodeIndex := bricks[brickIndex].NodeIndex
+		wordIndex := svoHeaderWordCount + int(nodeIndex)*2
+		if wordIndex < 0 || wordIndex >= len(words) {
+			return false
+		}
+		patches = append(patches, bufferWordPatch{
+			dstOffset: vk.DeviceSize(wordIndex * 4),
+			value:     words[wordIndex],
+		})
+	}
+
+	chunk.pendingWords = nil
+	chunk.pendingBricks = bricks
+	chunk.pendingBrickIndices = append(chunk.pendingBrickIndices[:0], brickIndices...)
+	chunk.pendingPaletteWords = append(chunk.pendingPaletteWords[:0], words[paletteOffset:paletteOffset+world.PaletteSize]...)
+	chunk.pendingPaletteOffset = vk.DeviceSize(paletteOffset * 4)
+	chunk.pendingWordPatches = append(chunk.pendingWordPatches[:0], patches...)
+	return true
+}
+
+func (chunk *ChunkResources) recordBufferWordPatches(frame *Frame, patches []bufferWordPatch) error {
+	if chunk == nil || frame == nil || len(patches) == 0 {
+		return nil
+	}
+	size := vk.DeviceSize(len(patches) * 4)
+	stagingBuffer, stagingOffset, dst, release, err := frame.renderer.stagingAllocForUpload(frame.FrameSlot, size, 4)
+	if err != nil {
+		return fmt.Errorf("allocating staging space for scene patches: %w", err)
+	}
+	if release != nil {
+		frame.renderer.deferFrameRelease(frame.FrameSlot, release)
+	}
+	values := unsafe.Slice((*uint32)(dst), len(patches))
+	regions := make([]vk.BufferCopy, len(patches))
+	for index, patch := range patches {
+		values[index] = patch.value
+		regions[index] = vk.BufferCopy{
+			SrcOffset: stagingOffset + vk.DeviceSize(index*4),
+			DstOffset: patch.dstOffset,
+			Size:      4,
+		}
+	}
+	vk.CmdCopyBuffer(frame.CommandBuffer, stagingBuffer, chunk.buffer, uint32(len(regions)), regions)
+	return nil
+}
+
+func (chunk *ChunkResources) recordBufferWordSlice(frame *Frame, dstOffset vk.DeviceSize, words []uint32) error {
+	if chunk == nil || frame == nil || len(words) == 0 {
+		return nil
+	}
+	size := vk.DeviceSize(len(words) * 4)
+	stagingBuffer, stagingOffset, dst, release, err := frame.renderer.stagingAllocForUpload(frame.FrameSlot, size, 4)
+	if err != nil {
+		return fmt.Errorf("allocating staging space for scene palette update: %w", err)
+	}
+	if release != nil {
+		frame.renderer.deferFrameRelease(frame.FrameSlot, release)
+	}
+	copy(unsafe.Slice((*uint32)(dst), len(words)), words)
+	regions := []vk.BufferCopy{{SrcOffset: stagingOffset, DstOffset: dstOffset, Size: size}}
+	vk.CmdCopyBuffer(frame.CommandBuffer, stagingBuffer, chunk.buffer, 1, regions)
 	return nil
 }
 

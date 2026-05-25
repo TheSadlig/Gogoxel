@@ -164,7 +164,15 @@ func (s *SVO) tryApplyVoxelEditsIncremental(edits []VoxelEdit) (int, bool) {
 		s.extendOccupiedBounds(uint(position[0]), uint(position[1]), uint(position[2]), 1)
 	}
 	s.syncStorageWordsPalette()
-	s.lastEdit = editStats{mode: editApplyModeIncremental, touchedBricks: len(mutationOrder)}
+	brickIndices := make([]int, 0, len(mutationOrder))
+	for _, mutation := range mutationOrder {
+		brickIndices = append(brickIndices, mutation.brickIndex)
+	}
+	s.lastEdit = editStats{
+		mode:          editApplyModeIncremental,
+		touchedBricks: len(mutationOrder),
+		brickIndices:  brickIndices,
+	}
 	return changedCount, true
 }
 

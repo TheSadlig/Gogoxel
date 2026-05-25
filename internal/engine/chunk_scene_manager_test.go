@@ -45,20 +45,30 @@ func (g *chunkStreamTestGenerator) ChunkPaletteColors() []uint32 {
 	return []uint32{g.color}
 }
 
-func (g *chunkStreamTestGenerator) BuildChunkSVO(svo *world.SVO, chunkX, chunkY int) error {
-	return g.BuildSVO(svo, generators.BuildRequest{ChunkX: chunkX, ChunkY: chunkY, ChunkRange: 0})
+func (g *chunkStreamTestGenerator) BuildSVO(svo *world.SVO, request generators.BuildRequest) error {
+	if svo == nil {
+		return fmt.Errorf("svo is required")
+	}
+	request = request.Normalized()
+	svo.BuildTreeSparseVolumes(request.SceneSize(g.chunkSize), func(_addVoxel func(x, y, z uint, color uint32), addCube func(x, y, z, cubeSize uint, color uint32)) {
+		request.ForEachChunk(g.chunkSize, func(_chunkX, _chunkY int, originX, originY uint) {
+			addCube(originX, originY, 0, g.chunkSize, g.color)
+		})
+	})
+	return nil
 }
 
-func (g *chunkStreamTestGenerator) BuildSVO(svo *world.SVO, request generators.BuildRequest) error {
-	if request.ChunkRange != 0 {
-		return fmt.Errorf("expected per-chunk build request, got range %d", request.ChunkRange)
+
+func (g *chunkStreamTestGenerator) LoadChunkSVO(svo *world.SVO, chunkX, chunkY int) error {
+	if svo == nil {
+		return fmt.Errorf("svo is required")
 	}
-	coord := chunkCoord{x: request.ChunkX, y: request.ChunkY}
+	coord := chunkCoord{x: chunkX, y: chunkY}
 	g.mu.Lock()
 	g.calls[coord]++
 	g.mu.Unlock()
 
-	svo.BuildTreeSparseVolumes(request.SceneSize(g.chunkSize), func(_addVoxel func(x, y, z uint, color uint32), addCube func(x, y, z, cubeSize uint, color uint32)) {
+	svo.BuildTreeSparseVolumes(g.chunkSize, func(_addVoxel func(x, y, z uint, color uint32), addCube func(x, y, z, cubeSize uint, color uint32)) {
 		addCube(0, 0, 0, g.chunkSize, g.color)
 	})
 	return nil
@@ -106,19 +116,19 @@ func (g *blockingChunkStreamTestGenerator) ChunkPaletteColors() []uint32 {
 	return g.base.ChunkPaletteColors()
 }
 
-func (g *blockingChunkStreamTestGenerator) BuildChunkSVO(svo *world.SVO, chunkX, chunkY int) error {
-	return g.BuildSVO(svo, generators.BuildRequest{ChunkX: chunkX, ChunkY: chunkY, ChunkRange: 0})
+func (g *blockingChunkStreamTestGenerator) BuildSVO(svo *world.SVO, request generators.BuildRequest) error {
+	return g.base.BuildSVO(svo, request)
 }
 
-func (g *blockingChunkStreamTestGenerator) BuildSVO(svo *world.SVO, request generators.BuildRequest) error {
-	if request.ChunkX == g.blockCoord.x && request.ChunkY == g.blockCoord.y {
+func (g *blockingChunkStreamTestGenerator) LoadChunkSVO(svo *world.SVO, chunkX, chunkY int) error {
+	if chunkX == g.blockCoord.x && chunkY == g.blockCoord.y {
 		select {
 		case g.buildStarted <- struct{}{}:
 		default:
 		}
 		<-g.releaseBuild
 	}
-	return g.base.BuildSVO(svo, request)
+	return g.base.LoadChunkSVO(svo, chunkX, chunkY)
 }
 
 func (g *blockingChunkStreamTestGenerator) buildCount() int {
@@ -204,7 +214,8 @@ func TestChunkSceneManagerDoesNotPublishIncompleteScene(t *testing.T) {
 }
 
 func TestChunkSceneManagerKeepsPerlinMixedBricks(t *testing.T) {
-	manager := newChunkSceneManager(generators.NewPerlinGenerator(1, 2))
+	loader := generatePerlinChunkMapLoader(t, generators.BuildRequest{ChunkX: 0, ChunkY: 0, ChunkRange: 1})
+	manager := newChunkSceneManager(loader)
 	defer manager.Close()
 
 	scene, err := manager.LoadInitial(generators.BuildRequest{ChunkX: 0, ChunkY: 0, ChunkRange: 1})
@@ -231,7 +242,8 @@ func TestChunkSceneManagerMatchesDirectPerlinBuild(t *testing.T) {
 		t.Fatalf("direct BuildSVO returned error: %v", err)
 	}
 
-	manager := newChunkSceneManager(generator)
+	loader := generatePerlinChunkMapLoader(t, request)
+	manager := newChunkSceneManager(loader)
 	defer manager.Close()
 	composed, err := manager.LoadInitial(request)
 	if err != nil {
@@ -267,6 +279,48 @@ func TestChunkSceneManagerMatchesDirectPerlinBuild(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestChunkSceneManagerLargePerlinSceneHasUniqueBrickOrigins(t *testing.T) {
+	request := generators.BuildRequest{ChunkX: 6, ChunkY: 0, ChunkRange: 7}
+	loader := generatePerlinChunkMapLoader(t, request)
+	manager := newChunkSceneManager(loader)
+	defer manager.Close()
+
+	scene, err := manager.LoadInitial(request)
+	if err != nil {
+		t.Fatalf("LoadInitial returned error: %v", err)
+	}
+	if scene == nil {
+		t.Fatal("expected composed scene")
+	}
+
+	seen := make(map[[3]uint32]int, scene.BrickCount())
+	for index, brick := range scene.BricksRef() {
+		if brick.Voxels == nil {
+			t.Fatalf("brick %d at origin %v has nil voxels", index, brick.Origin)
+		}
+		if previous, ok := seen[brick.Origin]; ok {
+			t.Fatalf("duplicate brick origin %v for indices %d and %d", brick.Origin, previous, index)
+		}
+		seen[brick.Origin] = index
+	}
+	if len(seen) != scene.BrickCount() {
+		t.Fatalf("unique brick origin count = %d, want %d", len(seen), scene.BrickCount())
+	}
+}
+
+func generatePerlinChunkMapLoader(t *testing.T, request generators.BuildRequest) *generators.GeneratedChunkMap {
+	t.Helper()
+	mapDir := generators.GeneratedChunkMapDir(t.TempDir(), "Perlin Terrain")
+	if err := generators.GenerateChunkMapWindow(mapDir, generators.NewPerlinGenerator(1, 2), request); err != nil {
+		t.Fatalf("GenerateChunkMapWindow returned error: %v", err)
+	}
+	loader, err := generators.OpenGeneratedChunkMap(mapDir)
+	if err != nil {
+		t.Fatalf("OpenGeneratedChunkMap returned error: %v", err)
+	}
+	return loader
 }
 
 func waitForChunkBuildCount(t *testing.T, generator *chunkStreamTestGenerator, want int) {

@@ -17,7 +17,7 @@ const (
 	moveUnitsPerSecond   = float32(6)
 	turnDegreesPerSecond = float32(120)
 	maxPitchDegrees      = float32(89)
-	maxAutoChunkRange    = 10
+	maxAutoChunkRange    = 32
 )
 
 type Config struct {
@@ -123,17 +123,19 @@ func (c *Core) LoadGenerator(name string) error {
 	if err != nil {
 		return err
 	}
-	if streamGenerator, ok := asChunkStreamGenerator(item); ok {
+	focusInitialCamera := c.shouldFocusInitialCameraOnLoad()
+	preserveWorldCamera := !focusInitialCamera
+	if loader, ok := asChunkLoader(item); ok {
 		worldCamera := c.worldCamera()
 		buildRequest := c.cameraBuildRequest(item.ChunkSize(), worldCamera, generators.BuildRequest{}, true)
-		return c.loadChunkStreamGenerator(streamGenerator, name, buildRequest, true, worldCamera, true)
+		return c.loadChunkLoader(loader, name, buildRequest, preserveWorldCamera, worldCamera, true, focusInitialCamera)
 	}
 	if !isCameraDrivenGenerator(item) {
-		return c.loadGenerator(item, name, generators.BuildRequest{}, false, platform.Camera{}, false)
+		return c.loadGenerator(item, name, generators.BuildRequest{}, false, platform.Camera{}, false, false)
 	}
 	worldCamera := c.worldCamera()
 	buildRequest := c.cameraBuildRequest(item.ChunkSize(), worldCamera, generators.BuildRequest{}, true)
-	return c.loadGenerator(item, name, buildRequest, true, worldCamera, true)
+	return c.loadGenerator(item, name, buildRequest, preserveWorldCamera, worldCamera, true, focusInitialCamera)
 }
 
 func (c *Core) LoadGeneratorAt(request GeneratorLoadRequest) error {
@@ -149,10 +151,10 @@ func (c *Core) LoadGeneratorAt(request GeneratorLoadRequest) error {
 		ChunkY:     request.ChunkY,
 		ChunkRange: request.ChunkRange,
 	}.Normalized()
-	if streamGenerator, ok := asChunkStreamGenerator(item); ok {
-		return c.loadChunkStreamGenerator(streamGenerator, request.Name, buildRequest, false, platform.Camera{}, false)
+	if loader, ok := asChunkLoader(item); ok {
+		return c.loadChunkLoader(loader, request.Name, buildRequest, false, platform.Camera{}, false, false)
 	}
-	return c.loadGenerator(item, request.Name, buildRequest, false, platform.Camera{}, false)
+	return c.loadGenerator(item, request.Name, buildRequest, false, platform.Camera{}, false, false)
 }
 
 func (c *Core) lookupGenerator(name string) (generators.Generator, error) {
@@ -169,7 +171,7 @@ func (c *Core) lookupGenerator(name string) (generators.Generator, error) {
 	return item, nil
 }
 
-func (c *Core) loadGenerator(item generators.Generator, name string, buildRequest generators.BuildRequest, preserveWorldCamera bool, worldCamera platform.Camera, autoRange bool) error {
+func (c *Core) loadGenerator(item generators.Generator, name string, buildRequest generators.BuildRequest, preserveWorldCamera bool, worldCamera platform.Camera, autoRange bool, focusInitialCamera bool) error {
 	c.closeChunkSceneManager()
 	buildRequest = buildRequest.Normalized()
 	svo, chunkSize, err := c.catalog.Build(name, buildRequest)
@@ -187,6 +189,8 @@ func (c *Core) loadGenerator(item generators.Generator, name string, buildReques
 	if preserveWorldCamera {
 		c.camera = c.localCamera(worldCamera)
 		c.clampCamera()
+	} else if focusInitialCamera {
+		c.focusInitialCameraForChunkWindow(buildRequest, chunkSize)
 	} else {
 		c.resetCameraForScene(buildRequest, chunkSize)
 	}
@@ -194,7 +198,7 @@ func (c *Core) loadGenerator(item generators.Generator, name string, buildReques
 	return nil
 }
 
-func (c *Core) loadChunkStreamGenerator(item generators.ChunkStreamGenerator, name string, buildRequest generators.BuildRequest, preserveWorldCamera bool, worldCamera platform.Camera, autoRange bool) error {
+func (c *Core) loadChunkLoader(item generators.ChunkLoader, name string, buildRequest generators.BuildRequest, preserveWorldCamera bool, worldCamera platform.Camera, autoRange bool, focusInitialCamera bool) error {
 	if c == nil {
 		return fmt.Errorf("engine core is not initialized")
 	}
@@ -220,6 +224,8 @@ func (c *Core) loadChunkStreamGenerator(item generators.ChunkStreamGenerator, na
 	if preserveWorldCamera {
 		c.camera = c.localCamera(worldCamera)
 		c.clampCamera()
+	} else if focusInitialCamera {
+		c.focusInitialCameraForChunkWindow(buildRequest, c.generatorChunkSize)
 	} else {
 		c.resetCameraForScene(buildRequest, c.generatorChunkSize)
 	}
@@ -437,6 +443,7 @@ func (c *Core) advanceCamera(delta time.Duration) error {
 	if c == nil || delta <= 0 {
 		return nil
 	}
+	previousCamera := c.camera
 	deltaSeconds := float32(delta.Seconds())
 	moveStep := moveUnitsPerSecond * deltaSeconds
 	turnStep := turnDegreesPerSecond * deltaSeconds
@@ -499,6 +506,12 @@ func (c *Core) advanceCamera(delta time.Duration) error {
 		c.camera.PitchDeg += turnStep
 	}
 	c.clampCamera()
+	if c.camera == previousCamera {
+		if c.chunkScene != nil {
+			return c.applyChunkSceneUpdate(c.worldCamera())
+		}
+		return nil
+	}
 	return c.syncCameraDrivenGenerator()
 }
 
@@ -516,7 +529,7 @@ func (c *Core) syncCameraDrivenGenerator() error {
 	if nextRequest == c.generatorBuildRequest {
 		return nil
 	}
-	return c.loadGenerator(c.generator, c.generatorName, nextRequest, true, worldCamera, c.generatorAutoRange)
+	return c.loadGenerator(c.generator, c.generatorName, nextRequest, true, worldCamera, c.generatorAutoRange, false)
 }
 
 func (c *Core) applyChunkSceneUpdate(worldCamera platform.Camera) error {
@@ -630,12 +643,12 @@ func isCameraDrivenGenerator(item generators.Generator) bool {
 	return ok && cameraDriven.CameraDriven()
 }
 
-func asChunkStreamGenerator(item generators.Generator) (generators.ChunkStreamGenerator, bool) {
+func asChunkLoader(item generators.Generator) (generators.ChunkLoader, bool) {
 	if item == nil {
 		return nil, false
 	}
-	streamGenerator, ok := item.(generators.ChunkStreamGenerator)
-	return streamGenerator, ok
+	loader, ok := item.(generators.ChunkLoader)
+	return loader, ok
 }
 
 func chunkIndexForPosition(position float32, chunkSize uint) int {
@@ -655,14 +668,7 @@ func cameraChunkRange(camera platform.Camera, chunkSize uint) int {
 	}
 	altitude := float32(math.Abs(float64(camera.Position[2])))
 	lateralReach := altitude * float32(math.Tan(halfFovRad))
-	forwardReach := float32(0)
-	bottomPitchRad := float64(camera.PitchDeg)*math.Pi/180 - halfFovRad
-	if bottomPitchRad < -0.017453292519943295 {
-		tanPitch := math.Tan(-bottomPitchRad)
-		if tanPitch > 0 {
-			forwardReach = altitude / float32(tanPitch)
-		}
-	}
+	forwardReach := visibleGroundReach(altitude, float64(camera.PitchDeg)*math.Pi/180, halfFovRad)
 	visibleReach := maxFloat32(lateralReach, forwardReach)
 	if visibleReach <= float32(chunkSize) {
 		return 0
@@ -672,6 +678,25 @@ func cameraChunkRange(camera platform.Camera, chunkSize uint) int {
 		return maxAutoChunkRange
 	}
 	return rangeChunks
+}
+
+func visibleGroundReach(altitude float32, pitchRad, halfFovRad float64) float32 {
+	if altitude <= 0 {
+		return 0
+	}
+	const minDownwardPitchRad = math.Pi / 180
+	farPitchRad := pitchRad + halfFovRad
+	if farPitchRad >= -minDownwardPitchRad {
+		farPitchRad = pitchRad
+	}
+	if farPitchRad >= -minDownwardPitchRad {
+		return 0
+	}
+	tanPitch := math.Tan(-farPitchRad)
+	if tanPitch <= 0 {
+		return 0
+	}
+	return altitude / float32(tanPitch)
 }
 
 func (c *Core) clampCamera() {
@@ -690,6 +715,55 @@ func defaultCamera() platform.Camera {
 		PitchDeg: 0,
 		FovDeg:   60,
 	}
+}
+
+func (c *Core) shouldFocusInitialCameraOnLoad() bool {
+	if c == nil {
+		return false
+	}
+	return c.svo == nil && c.generator == nil && c.camera == defaultCamera()
+}
+
+func (c *Core) focusInitialCameraForChunkWindow(request generators.BuildRequest, chunkSize uint) {
+	if c == nil {
+		return
+	}
+	minBounds, maxBounds, ok := [3]uint32{}, [3]uint32{}, false
+	if c.svo != nil {
+		minBounds, maxBounds, ok = c.svo.OccupiedBounds()
+	}
+	if !ok {
+		c.resetCameraForScene(request, chunkSize)
+		return
+	}
+
+	centerX := (float32(minBounds[0]) + float32(maxBounds[0])) * 0.5
+	centerY := (float32(minBounds[1]) + float32(maxBounds[1])) * 0.5
+	centerZ := (float32(minBounds[2]) + float32(maxBounds[2])) * 0.5
+	requestedSpan := float32(0)
+	if request != (generators.BuildRequest{}) && chunkSize > 0 {
+		centerX, centerY = request.LocalChunkCenter(chunkSize)
+		requestedSpan = float32(request.ExactSceneSize(chunkSize))
+	}
+	if requestedSpan <= 0 {
+		requestedSpan = maxFloat32(
+			float32(maxBounds[0]-minBounds[0]),
+			float32(maxBounds[1]-minBounds[1]),
+			float32(maxBounds[2]-minBounds[2]),
+			float32(chunkSize),
+		)
+	}
+	if requestedSpan < float32(chunkSize)*4 {
+		requestedSpan = float32(chunkSize) * 4
+	}
+	altitude := maxFloat32(float32(chunkSize)*3, requestedSpan*0.22, 256)
+	c.camera = platform.Camera{
+		Position: [3]float32{centerX - requestedSpan*0.25, centerY - requestedSpan*0.25, centerZ + altitude},
+		YawDeg:   45,
+		PitchDeg: -24,
+		FovDeg:   60,
+	}
+	c.clampCamera()
 }
 
 func (c *Core) resetCameraForScene(request generators.BuildRequest, chunkSize uint) {
