@@ -12,10 +12,16 @@ import (
 )
 
 type queueFamilyIndices struct {
-	graphics uint32
-	present  uint32
-	hasGraph bool
-	hasPres  bool
+	graphics    uint32
+	present     uint32
+	transfer    uint32
+	hasGraph    bool
+	hasPres     bool
+	hasTransfer bool
+	// transferIsDedicated is true when the chosen transfer family is
+	// transfer-only (no graphics or compute bits). When true, async upload
+	// submissions truly run in parallel with the graphics queue.
+	transferIsDedicated bool
 }
 
 type swapchainSupport struct {
@@ -89,9 +95,26 @@ func (r *Renderer) findQueueFamilies(device vk.PhysicalDevice) (queueFamilyIndic
 			indices.hasPres = true
 		}
 
-		if indices.hasGraph && indices.hasPres {
-			return indices, true
+		// Prefer a dedicated transfer-only queue family (transfer bit set,
+		// graphics and compute clear). If none is found we fall back to any
+		// family with the transfer bit (graphics families implicitly support
+		// transfer per spec).
+		flags := family.QueueFlags
+		hasTransferBit := flags&vk.QueueFlags(vk.QueueTransferBit) != 0
+		hasGraphicsBit := flags&vk.QueueFlags(vk.QueueGraphicsBit) != 0
+		hasComputeBit := flags&vk.QueueFlags(vk.QueueComputeBit) != 0
+		if hasTransferBit && !hasGraphicsBit && !hasComputeBit {
+			indices.transfer = uint32(index)
+			indices.hasTransfer = true
+			indices.transferIsDedicated = true
+		} else if hasTransferBit && !indices.transferIsDedicated && !indices.hasTransfer {
+			indices.transfer = uint32(index)
+			indices.hasTransfer = true
 		}
+	}
+
+	if indices.hasGraph && indices.hasPres {
+		return indices, true
 	}
 
 	return indices, false

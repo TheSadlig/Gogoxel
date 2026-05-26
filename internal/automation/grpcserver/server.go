@@ -328,6 +328,10 @@ func metricsToProto(metrics session.MetricsSnapshot) *automationpb.MetricsSnapsh
 		AverageFrameTimeMs:           metrics.AverageFrameTimeMs,
 		P95FrameTimeMs:               metrics.P95FrameTimeMs,
 		FrameSampleCount:             uint64(metrics.FrameSampleCount),
+		AverageGpuFrameTimeMs:        metrics.AverageGPUFrameTimeMs,
+		P95GpuFrameTimeMs:            metrics.P95GPUFrameTimeMs,
+		GpuFrameSampleCount:          uint64(metrics.GPUFrameSampleCount),
+		HeapAllocDeltaBytes:          metrics.HeapAllocDeltaBytes,
 	}
 }
 

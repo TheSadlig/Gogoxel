@@ -44,6 +44,16 @@ type MetricsSnapshot struct {
 	AverageFrameTimeMs           float64
 	P95FrameTimeMs               float64
 	FrameSampleCount             int
+	// GPU-side timing (Vulkan timestamp queries). Zero if the device does
+	// not expose a usable timestamp period.
+	AverageGPUFrameTimeMs float64
+	P95GPUFrameTimeMs     float64
+	GPUFrameSampleCount   int
+	// HeapAllocDeltaBytes is runtime.MemStats.TotalAlloc since the last
+	// metrics window reset — a coarse but useful "allocations during this
+	// window" budget that any zero-alloc steady state should keep near 0
+	// once the warm-up frames have completed.
+	HeapAllocDeltaBytes uint64
 }
 
 type ArtifactInfo struct {

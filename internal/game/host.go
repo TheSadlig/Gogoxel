@@ -39,11 +39,12 @@ type hostResult struct {
 }
 
 type sessionState struct {
-	options       HostOptions
-	game          *Game
-	frameWindow   *frameWindow
-	trace         *traceRecorder
-	stopRequested bool
+	options                HostOptions
+	game                   *Game
+	frameWindow            *frameWindow
+	trace                  *traceRecorder
+	stopRequested          bool
+	heapAllocBaselineBytes uint64
 }
 
 var _ session.AutomationSession = (*Host)(nil)

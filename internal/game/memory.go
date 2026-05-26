@@ -25,6 +25,15 @@ func currentProcessMemoryStats() processMemoryStats {
 	}
 }
 
+// currentHeapTotalAllocBytes returns the monotonic counter of cumulative
+// allocated bytes since process start (runtime.MemStats.TotalAlloc).
+// Subtracting baselines yields a delta over a window.
+func currentHeapTotalAllocBytes() uint64 {
+	memStats := &runtime.MemStats{}
+	runtime.ReadMemStats(memStats)
+	return memStats.TotalAlloc
+}
+
 func linuxProcessResidentMemoryBytes() (uint64, bool) {
 	data, err := os.ReadFile("/proc/self/statm")
 	if err != nil {

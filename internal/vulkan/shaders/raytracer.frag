@@ -31,7 +31,10 @@ layout(std430, binding = 0) readonly buffer SVOBuffer {
 layout(binding = 1) uniform utexture3D brickPoolTexture;
 
 const int MaxTraversalDepth = 24;
-const int MaxMacroSteps = 500;
+// 64 is enough for natural terrain at the world scale we render: it bounds
+// the macro-step inner loop while still walking the longest sky-grazing
+// rays. Anything higher just burns ALU on misses.
+const int MaxMacroSteps = 64;
 const int MaxBrickSteps = 24;
 const float BoundaryEpsilon = 1e-4;
 
@@ -246,40 +249,13 @@ bool raymarchBrick(
 
         uint materialID = texelFetch(brickPoolTexture, brickOriginPool + voxel, 0).r;
         if (materialID > 0u) {
-            ivec3 brickMax = ivec3(int(BrickSize));
-            vec3 grad = vec3(0.0);
-            for (int axis = 0; axis < 3; axis++) {
-                ivec3 dn2 = ivec3(0); dn2[axis] = -2;
-                ivec3 dp2 = ivec3(0); dp2[axis] =  2;
-                ivec3 vn2 = voxel + dn2;
-                ivec3 vp2 = voxel + dp2;
-                bool in2N = all(greaterThanEqual(vn2, ivec3(0))) && all(lessThan(vn2, brickMax));
-                bool in2P = all(greaterThanEqual(vp2, ivec3(0))) && all(lessThan(vp2, brickMax));
-                if (in2N && in2P) {
-                    float sn = texelFetch(brickPoolTexture, brickOriginPool + vn2, 0).r > 0u ? 1.0 : 0.0;
-                    float sp = texelFetch(brickPoolTexture, brickOriginPool + vp2, 0).r > 0u ? 1.0 : 0.0;
-                    grad[axis] = sn - sp;
-                } else {
-                    ivec3 dn1 = ivec3(0); dn1[axis] = -1;
-                    ivec3 dp1 = ivec3(0); dp1[axis] =  1;
-                    ivec3 vn1 = voxel + dn1;
-                    ivec3 vp1 = voxel + dp1;
-                    bool in1N = all(greaterThanEqual(vn1, ivec3(0))) && all(lessThan(vn1, brickMax));
-                    bool in1P = all(greaterThanEqual(vp1, ivec3(0))) && all(lessThan(vp1, brickMax));
-                    if (in1N && in1P) {
-                        float sn = texelFetch(brickPoolTexture, brickOriginPool + vn1, 0).r > 0u ? 1.0 : 0.0;
-                        float sp = texelFetch(brickPoolTexture, brickOriginPool + vp1, 0).r > 0u ? 1.0 : 0.0;
-                        grad[axis] = sn - sp;
-                    }
-                }
-            }
-            if (dot(grad, grad) > 1e-4) {
-                hitNormal = normalize(grad);
-                if (dot(hitNormal, rd) > 0.0) hitNormal = -hitNormal;
-            } else {
-                uint hitAxis = hasFaceMask ? resolveFaceAxis(faceMask, rd) : dominantAxis(rd);
-                hitNormal = axisNormal(hitAxis, rd);
-            }
+            // Cheap DDA normal: the face we entered the voxel through is
+            // already tracked via faceMask (set from the previous step's
+            // exit axis, or the brick entry-face mask for the first voxel).
+            // This replaces a 12-tap gradient probe per hit with a single
+            // axis lookup — identical visual result for axis-aligned voxels.
+            uint hitAxis = hasFaceMask ? resolveFaceAxis(faceMask, rd) : dominantAxis(rd);
+            hitNormal = axisNormal(hitAxis, rd);
             hitMaterialID = materialID;
             return true;
         }

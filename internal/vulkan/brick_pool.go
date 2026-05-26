@@ -92,6 +92,7 @@ func (r *Renderer) createBrickPoolWithEdge(textureEdge uint32) (*brickPool, erro
 		return nil, err
 	}
 
+	imageSharingMode, imageSharingCount, imageSharingIndices := r.crossQueueSharing()
 	imageCreateInfo := vk.ImageCreateInfo{
 		SType:     vk.StructureTypeImageCreateInfo,
 		ImageType: vk.ImageType3d,
@@ -101,13 +102,15 @@ func (r *Renderer) createBrickPoolWithEdge(textureEdge uint32) (*brickPool, erro
 			Height: pool.textureEdge,
 			Depth:  pool.textureEdge,
 		},
-		MipLevels:     1,
-		ArrayLayers:   1,
-		Samples:       vk.SampleCount1Bit,
-		Tiling:        vk.ImageTilingOptimal,
-		Usage:         vk.ImageUsageFlags(vk.ImageUsageTransferDstBit | vk.ImageUsageSampledBit),
-		SharingMode:   vk.SharingModeExclusive,
-		InitialLayout: vk.ImageLayoutUndefined,
+		MipLevels:             1,
+		ArrayLayers:           1,
+		Samples:               vk.SampleCount1Bit,
+		Tiling:                vk.ImageTilingOptimal,
+		Usage:                 vk.ImageUsageFlags(vk.ImageUsageTransferDstBit | vk.ImageUsageSampledBit),
+		SharingMode:           imageSharingMode,
+		QueueFamilyIndexCount: imageSharingCount,
+		PQueueFamilyIndices:   imageSharingIndices,
+		InitialLayout:         vk.ImageLayoutUndefined,
 	}
 	var image vk.Image
 	if err := withPinnedValue(&image, func() error {

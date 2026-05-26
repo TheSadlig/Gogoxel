@@ -449,6 +449,10 @@ type MetricsSnapshot struct {
 	AverageFrameTimeMs           float64                `protobuf:"fixed64,18,opt,name=average_frame_time_ms,json=averageFrameTimeMs,proto3" json:"average_frame_time_ms,omitempty"`
 	P95FrameTimeMs               float64                `protobuf:"fixed64,19,opt,name=p95_frame_time_ms,json=p95FrameTimeMs,proto3" json:"p95_frame_time_ms,omitempty"`
 	FrameSampleCount             uint64                 `protobuf:"varint,20,opt,name=frame_sample_count,json=frameSampleCount,proto3" json:"frame_sample_count,omitempty"`
+	AverageGpuFrameTimeMs        float64                `protobuf:"fixed64,21,opt,name=average_gpu_frame_time_ms,json=averageGpuFrameTimeMs,proto3" json:"average_gpu_frame_time_ms,omitempty"`
+	P95GpuFrameTimeMs            float64                `protobuf:"fixed64,22,opt,name=p95_gpu_frame_time_ms,json=p95GpuFrameTimeMs,proto3" json:"p95_gpu_frame_time_ms,omitempty"`
+	GpuFrameSampleCount          uint64                 `protobuf:"varint,23,opt,name=gpu_frame_sample_count,json=gpuFrameSampleCount,proto3" json:"gpu_frame_sample_count,omitempty"`
+	HeapAllocDeltaBytes          uint64                 `protobuf:"varint,24,opt,name=heap_alloc_delta_bytes,json=heapAllocDeltaBytes,proto3" json:"heap_alloc_delta_bytes,omitempty"`
 	unknownFields                protoimpl.UnknownFields
 	sizeCache                    protoimpl.SizeCache
 }
@@ -619,6 +623,34 @@ func (x *MetricsSnapshot) GetP95FrameTimeMs() float64 {
 func (x *MetricsSnapshot) GetFrameSampleCount() uint64 {
 	if x != nil {
 		return x.FrameSampleCount
+	}
+	return 0
+}
+
+func (x *MetricsSnapshot) GetAverageGpuFrameTimeMs() float64 {
+	if x != nil {
+		return x.AverageGpuFrameTimeMs
+	}
+	return 0
+}
+
+func (x *MetricsSnapshot) GetP95GpuFrameTimeMs() float64 {
+	if x != nil {
+		return x.P95GpuFrameTimeMs
+	}
+	return 0
+}
+
+func (x *MetricsSnapshot) GetGpuFrameSampleCount() uint64 {
+	if x != nil {
+		return x.GpuFrameSampleCount
+	}
+	return 0
+}
+
+func (x *MetricsSnapshot) GetHeapAllocDeltaBytes() uint64 {
+	if x != nil {
+		return x.HeapAllocDeltaBytes
 	}
 	return 0
 }
@@ -2244,7 +2276,7 @@ const file_gogoxel_automation_v1_automation_proto_rawDesc = "" +
 	"\x10require_renderer\x18\x01 \x01(\bR\x0frequireRenderer\x120\n" +
 	"\x14require_scene_loaded\x18\x02 \x01(\bR\x12requireSceneLoaded\x12:\n" +
 	"\x19require_streaming_settled\x18\x03 \x01(\bR\x17requireStreamingSettled\x12\x1b\n" +
-	"\tmax_ticks\x18\x04 \x01(\rR\bmaxTicks\"\xfe\x06\n" +
+	"\tmax_ticks\x18\x04 \x01(\rR\bmaxTicks\"\xd4\b\n" +
 	"\x0fMetricsSnapshot\x125\n" +
 	"\x06camera\x18\x01 \x01(\v2\x1d.gogoxel.automation.v1.CameraR\x06camera\x12+\n" +
 	"\x11current_generator\x18\x02 \x01(\tR\x10currentGenerator\x12\x1b\n" +
@@ -2271,7 +2303,11 @@ const file_gogoxel_automation_v1_automation_proto_rawDesc = "" +
 	"averageFps\x121\n" +
 	"\x15average_frame_time_ms\x18\x12 \x01(\x01R\x12averageFrameTimeMs\x12)\n" +
 	"\x11p95_frame_time_ms\x18\x13 \x01(\x01R\x0ep95FrameTimeMs\x12,\n" +
-	"\x12frame_sample_count\x18\x14 \x01(\x04R\x10frameSampleCount\"q\n" +
+	"\x12frame_sample_count\x18\x14 \x01(\x04R\x10frameSampleCount\x128\n" +
+	"\x19average_gpu_frame_time_ms\x18\x15 \x01(\x01R\x15averageGpuFrameTimeMs\x120\n" +
+	"\x15p95_gpu_frame_time_ms\x18\x16 \x01(\x01R\x11p95GpuFrameTimeMs\x123\n" +
+	"\x16gpu_frame_sample_count\x18\x17 \x01(\x04R\x13gpuFrameSampleCount\x123\n" +
+	"\x16heap_alloc_delta_bytes\x18\x18 \x01(\x04R\x13heapAllocDeltaBytes\"q\n" +
 	"\bArtifact\x12\x12\n" +
 	"\x04kind\x18\x01 \x01(\tR\x04kind\x12%\n" +
 	"\x0erequested_name\x18\x02 \x01(\tR\rrequestedName\x12\x12\n" +

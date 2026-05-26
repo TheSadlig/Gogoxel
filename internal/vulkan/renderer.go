@@ -32,8 +32,16 @@ type Renderer struct {
 
 	graphicsQueue      vk.Queue
 	presentQueue       vk.Queue
+	transferQueue      vk.Queue
 	graphicsQueueIndex uint32
 	presentQueueIndex  uint32
+	transferQueueIndex uint32
+	// hasDedicatedTransferQueue is true when the device exposes a transfer-only
+	// queue family separate from the graphics family. In that case bulk setup
+	// uploads run on a parallel queue and chunk-resource buffers/images that
+	// participate in transfer + graphics use SHARING_MODE_CONCURRENT to
+	// sidestep cross-queue ownership-transfer barriers.
+	hasDedicatedTransferQueue bool
 
 	swapchain             vk.Swapchain
 	swapchainImages       []vk.Image
@@ -44,8 +52,9 @@ type Renderer struct {
 
 	renderPass vk.RenderPass
 
-	commandPool    vk.CommandPool
-	commandBuffers []vk.CommandBuffer
+	commandPool         vk.CommandPool
+	transferCommandPool vk.CommandPool
+	commandBuffers      []vk.CommandBuffer
 
 	imageAvailableSemaphores []vk.Semaphore
 	renderFinishedSemaphores []vk.Semaphore
@@ -64,8 +73,13 @@ type Renderer struct {
 	stagingRings  [maxFramesInFlight]*stagingRing
 	sharedAirPool *brickPool
 
+	// gpuTimestamps measures wall-clock GPU work per frame slot via Vulkan
+	// timestamp queries. nil when the device has no usable timestamp period.
+	gpuTimestamps *gpuTimestamps
+
 	instanceExtensions []string
 	physicalDeviceName string
+	timestampPeriodNs  float32
 	presentMode        vk.PresentMode
 	captureSupported   bool
 }
@@ -140,6 +154,11 @@ func (r *Renderer) initVulkan() error {
 	if err := r.initStagingRings(); err != nil {
 		return err
 	}
+	timestamps, err := newGPUTimestamps(r.device, r.timestampPeriodNs, maxFramesInFlight)
+	if err != nil {
+		return err
+	}
+	r.gpuTimestamps = timestamps
 
 	return nil
 }
@@ -197,9 +216,17 @@ func (r *Renderer) pickPhysicalDevice() error {
 		r.graphicsQueueIndex = indices.graphics
 		r.presentQueueIndex = indices.present
 		r.physicalDeviceName = physicalDeviceName(device)
+		var props vk.PhysicalDeviceProperties
+		vk.GetPhysicalDeviceProperties(device, &props)
+		props.Deref()
+		props.Limits.Deref()
+		// TimestampPeriod is 0 → device cannot report GPU timestamps.
+		if props.Limits.TimestampComputeAndGraphics != vk.False {
+			r.timestampPeriodNs = props.Limits.TimestampPeriod
+		}
 		vk.GetPhysicalDeviceMemoryProperties(device, &r.memoryProperties)
 		r.memoryProperties.Deref()
-		fmt.Printf("[vulkan] physical device: %s\n", r.physicalDeviceName)
+		fmt.Printf("[vulkan] physical device: %s (timestamp period: %.2f ns)\n", r.physicalDeviceName, r.timestampPeriodNs)
 		return nil
 	}
 
@@ -213,8 +240,22 @@ func (r *Renderer) createLogicalDevice() error {
 	}
 
 	uniqueFamilies := []uint32{indices.graphics}
+	addUnique := func(family uint32) {
+		for _, existing := range uniqueFamilies {
+			if existing == family {
+				return
+			}
+		}
+		uniqueFamilies = append(uniqueFamilies, family)
+	}
 	if indices.graphics != indices.present {
-		uniqueFamilies = append(uniqueFamilies, indices.present)
+		addUnique(indices.present)
+	}
+	// Only request a separate queue if the transfer family is actually
+	// distinct from the graphics family — otherwise the dedicated path
+	// degenerates to graphics anyway.
+	if indices.hasTransfer && indices.transfer != indices.graphics {
+		addUnique(indices.transfer)
 	}
 
 	device, err := vkbridge.CreateDevice(r.physicalDevice, uniqueFamilies, []string{"VK_KHR_swapchain"})
@@ -225,6 +266,17 @@ func (r *Renderer) createLogicalDevice() error {
 
 	r.graphicsQueue = vkbridge.GetDeviceQueue(r.device, indices.graphics, 0)
 	r.presentQueue = vkbridge.GetDeviceQueue(r.device, indices.present, 0)
+	r.graphicsQueueIndex = indices.graphics
+	r.presentQueueIndex = indices.present
+	if indices.hasTransfer && indices.transfer != indices.graphics {
+		r.transferQueue = vkbridge.GetDeviceQueue(r.device, indices.transfer, 0)
+		r.transferQueueIndex = indices.transfer
+		r.hasDedicatedTransferQueue = true
+	} else {
+		r.transferQueue = r.graphicsQueue
+		r.transferQueueIndex = indices.graphics
+		r.hasDedicatedTransferQueue = false
+	}
 	return nil
 }
 
@@ -381,6 +433,17 @@ func (r *Renderer) createCommandPool() error {
 		return err
 	}
 	r.commandPool = commandPool
+	if r.hasDedicatedTransferQueue {
+		transferPool, err := vkbridge.CreateCommandPool(
+			r.device,
+			r.transferQueueIndex,
+			vk.CommandPoolCreateFlags(vk.CommandPoolCreateResetCommandBufferBit),
+		)
+		if err != nil {
+			return fmt.Errorf("creating transfer command pool: %w", err)
+		}
+		r.transferCommandPool = transferPool
+	}
 	return nil
 }
 
@@ -392,6 +455,10 @@ func (r *Renderer) cleanupVulkan() {
 		r.runDeferredReleases(frameSlot)
 	}
 	r.destroyStagingRings()
+	if r.gpuTimestamps != nil {
+		r.gpuTimestamps.destroy()
+		r.gpuTimestamps = nil
+	}
 	if r.sharedAirPool != nil {
 		r.sharedAirPool.Close(r.device)
 		r.sharedAirPool = nil
@@ -414,6 +481,9 @@ func (r *Renderer) cleanupVulkan() {
 	}
 	if !isZeroValue(r.commandPool) {
 		vk.DestroyCommandPool(r.device, r.commandPool, nil)
+	}
+	if !isZeroValue(r.transferCommandPool) {
+		vk.DestroyCommandPool(r.device, r.transferCommandPool, nil)
 	}
 	for _, framebuffer := range r.swapchainFramebuffers {
 		vk.DestroyFramebuffer(r.device, framebuffer, nil)
@@ -468,4 +538,14 @@ func (r *Renderer) PresentModeName() string {
 		return ""
 	}
 	return presentModeName(r.presentMode)
+}
+
+// LastGPUFrameMs returns the GPU wall-clock time for the most recently
+// completed frame in milliseconds. Returns 0 when the device does not
+// expose timestamp queries or no frame has been measured yet.
+func (r *Renderer) LastGPUFrameMs() float64 {
+	if r == nil || r.gpuTimestamps == nil {
+		return 0
+	}
+	return r.gpuTimestamps.lastFrameMs()
 }

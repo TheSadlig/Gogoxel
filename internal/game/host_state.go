@@ -70,6 +70,7 @@ func (s *sessionState) step(ctx context.Context, count int) (session.StepResult,
 		if s.options.AutomationExposed {
 			sample := time.Since(startedAt)
 			s.frameWindow.Record(sample)
+			s.frameWindow.RecordGPU(s.game.LastGPUFrameMs())
 			s.trace.recordFrame(sample, s.metricsSnapshot())
 		}
 	}
@@ -93,6 +94,7 @@ func (s *sessionState) advanceLiveFrame(delta time.Duration) error {
 	s.game.RecordFrame(delta)
 	if s.options.AutomationExposed {
 		s.frameWindow.Record(delta)
+		s.frameWindow.RecordGPU(s.game.LastGPUFrameMs())
 		s.trace.recordFrame(delta, s.metricsSnapshot())
 	}
 	return nil
@@ -146,6 +148,13 @@ func (s *sessionState) metricsSnapshot() session.MetricsSnapshot {
 	streaming := s.game.StreamingStats()
 	frameWindow := s.frameWindow.Snapshot()
 	memory := currentProcessMemoryStats()
+	heapDelta := uint64(0)
+	if s.heapAllocBaselineBytes > 0 {
+		current := currentHeapTotalAllocBytes()
+		if current >= s.heapAllocBaselineBytes {
+			heapDelta = current - s.heapAllocBaselineBytes
+		}
+	}
 	return session.MetricsSnapshot{
 		Camera:                       snapshot.Camera,
 		CurrentGenerator:             snapshot.GeneratorName,
@@ -167,6 +176,10 @@ func (s *sessionState) metricsSnapshot() session.MetricsSnapshot {
 		AverageFrameTimeMs:           frameWindow.AverageFrameTime.Seconds() * 1000,
 		P95FrameTimeMs:               frameWindow.P95FrameTime.Seconds() * 1000,
 		FrameSampleCount:             frameWindow.SampleCount,
+		AverageGPUFrameTimeMs:        frameWindow.AverageGPUFrameTime,
+		P95GPUFrameTimeMs:            frameWindow.P95GPUFrameTime,
+		GPUFrameSampleCount:          frameWindow.GPUSampleCount,
+		HeapAllocDeltaBytes:          heapDelta,
 	}
 }
 

@@ -55,6 +55,10 @@ message MetricsSnapshot {
   double average_frame_time_ms = 18;
   double p95_frame_time_ms = 19;
   uint64 frame_sample_count = 20;
+  double average_gpu_frame_time_ms = 21;
+  double p95_gpu_frame_time_ms = 22;
+  uint64 gpu_frame_sample_count = 23;
+  uint64 heap_alloc_delta_bytes = 24;
 }
 
 message Artifact {

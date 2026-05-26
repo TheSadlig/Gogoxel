@@ -1,5 +1,5 @@
 ---
-description: Lead Game Development Agent: TDD-driven engine design, Vulkan rendering, Go performance, and asset pipelines. Acts as a multi-disciplinary expert squad.
+description: "Lead Game Development Agent: TDD-driven engine design, Vulkan rendering, Go performance, and asset pipelines. Acts as a multi-disciplinary expert squad."
 tools: [vscode, execute, read/problems, read/readFile, read/viewImage, read/terminalLastCommand, edit, search, web, todo]
 ---
 

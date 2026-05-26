@@ -121,6 +121,11 @@ func (r *Renderer) drawFrame(record func(*Frame) error, afterRecord func(*Frame)
 	if err := vk.Error(vk.WaitForFences(r.device, 1, fences, vk.True, math.MaxUint64)); err != nil {
 		return fmt.Errorf("waiting for in-flight fence: %w", err)
 	}
+	// The fence is signalled → this slot's previous timestamp pair is
+	// guaranteed visible. Read it before the command buffer resets the pool.
+	if r.gpuTimestamps != nil {
+		r.gpuTimestamps.readPrevious(currentFrame)
+	}
 	r.runDeferredReleases(currentFrame)
 
 	var imageIndex uint32
@@ -199,6 +204,14 @@ func (r *Renderer) recordCommandBuffer(frameSlot int, imageIndex uint32, record 
 		return fmt.Errorf("beginning command buffer %d: %w", imageIndex, err)
 	}
 
+	// Reset and write BEGIN timestamp before any GPU work. The slot is
+	// derived from frameSlot (cycled 0..maxFramesInFlight-1) so reads in
+	// the next frame line up with this slot's fence.
+	if r.gpuTimestamps != nil {
+		r.gpuTimestamps.recordReset(commandBuffer, frameSlot)
+		r.gpuTimestamps.writeBegin(commandBuffer, frameSlot)
+	}
+
 	frame := &Frame{
 		renderer:      r,
 		CommandBuffer: commandBuffer,
@@ -217,6 +230,11 @@ func (r *Renderer) recordCommandBuffer(frameSlot int, imageIndex uint32, record 
 		if err := afterRecord(frame); err != nil {
 			return err
 		}
+	}
+
+	// END timestamp at bottom of pipe, after all GPU work for this frame.
+	if r.gpuTimestamps != nil {
+		r.gpuTimestamps.writeEnd(commandBuffer, frameSlot)
 	}
 
 	if err := vk.Error(vk.EndCommandBuffer(commandBuffer)); err != nil {

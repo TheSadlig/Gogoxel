@@ -266,6 +266,7 @@ func (h *Host) ResetMetricsWindow(ctx context.Context) error {
 	_, err := h.invoke(ctx, func(_ context.Context, state *sessionState) (any, error) {
 		state.trace.recordCommand("reset_metrics_window", nil)
 		state.frameWindow.Reset()
+		state.heapAllocBaselineBytes = currentHeapTotalAllocBytes()
 		return nil, nil
 	})
 	return err

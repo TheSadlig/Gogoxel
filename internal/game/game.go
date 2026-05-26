@@ -30,6 +30,13 @@ type Game struct {
 	externalHeldActions input.Snapshot
 	requestedClose      bool
 
+	// Scratch snapshots reused every frame to keep input collection
+	// zero-allocation. See keyboardSnapshotInto / mouseSnapshotInto /
+	// mergedHeldInto for the in-place fill pattern.
+	keyboardScratch input.Snapshot
+	mouseScratch    input.Snapshot
+	mergedHeld      input.Snapshot
+
 	fpsFrames          int
 	fpsElapsed         time.Duration
 	lastFPS            float64
@@ -45,6 +52,9 @@ func New(options Options) *Game {
 		options:             options,
 		core:                engine.NewCore(engine.DefaultGeneratorCatalogWithChunkRoot(options.ChunkRoot), engine.Config{TickRateHz: options.TickRateHz}),
 		externalHeldActions: make(input.Snapshot),
+		keyboardScratch:     make(input.Snapshot, len(defaultKeyBindings())),
+		mouseScratch:        make(input.Snapshot, 2),
+		mergedHeld:          make(input.Snapshot, len(defaultKeyBindings())+2),
 	}
 }
 
@@ -403,6 +413,16 @@ func (g *Game) StreamingStats() vulkan.StreamingStats {
 	return g.chunk.StreamingStats()
 }
 
+// LastGPUFrameMs returns the most-recent GPU wall-clock frame time, in
+// milliseconds, sourced from Vulkan timestamp queries. Returns 0 when the
+// renderer is absent or the device does not expose timestamp queries.
+func (g *Game) LastGPUFrameMs() float64 {
+	if g == nil || g.renderer == nil {
+		return 0
+	}
+	return g.renderer.LastGPUFrameMs()
+}
+
 func (g *Game) CaptureScreenshot(path string) error {
 	if g.renderer == nil {
 		return fmt.Errorf("renderer is not initialized")
@@ -415,7 +435,10 @@ func (g *Game) CaptureScreenshot(path string) error {
 
 func (g *Game) Update(delta time.Duration) error {
 	g.core.SetCursorSample(cursorSample(g.window))
-	g.core.SetHeldActions(mergeSnapshots(keyboardSnapshot(g.window), mouseSnapshot(g.window), g.externalHeldActions))
+	keyboardSnapshotInto(g.keyboardScratch, g.window)
+	mouseSnapshotInto(g.mouseScratch, g.window)
+	mergedHeldInto(g.mergedHeld, g.keyboardScratch, g.mouseScratch, g.externalHeldActions)
+	g.core.SetHeldActions(g.mergedHeld)
 	if err := g.core.Step(delta); err != nil {
 		return err
 	}
@@ -567,23 +590,35 @@ func defaultKeyBindings() map[input.Action]glfw.Key {
 func keyboardSnapshot(source *platform.Window) input.Snapshot {
 	bindings := defaultKeyBindings()
 	snapshot := make(input.Snapshot, len(bindings))
-	if source == nil {
-		return snapshot
-	}
-	for action, key := range bindings {
-		snapshot[action] = source.IsKeyDown(key)
-	}
+	keyboardSnapshotInto(snapshot, source)
 	return snapshot
+}
+
+// keyboardSnapshotInto fills dst from the window key state without allocating.
+// Callers own dst and reuse it across frames.
+func keyboardSnapshotInto(dst input.Snapshot, source *platform.Window) {
+	clear(dst)
+	if source == nil {
+		return
+	}
+	for action, key := range defaultKeyBindings() {
+		dst[action] = source.IsKeyDown(key)
+	}
 }
 
 func mouseSnapshot(source *platform.Window) input.Snapshot {
 	snapshot := make(input.Snapshot, 2)
-	if source == nil {
-		return snapshot
-	}
-	snapshot[control.ActionPlaceCube] = source.IsMouseButtonDown(glfw.MouseButtonLeft)
-	snapshot[control.ActionRemoveCube] = source.IsMouseButtonDown(glfw.MouseButtonRight)
+	mouseSnapshotInto(snapshot, source)
 	return snapshot
+}
+
+func mouseSnapshotInto(dst input.Snapshot, source *platform.Window) {
+	clear(dst)
+	if source == nil {
+		return
+	}
+	dst[control.ActionPlaceCube] = source.IsMouseButtonDown(glfw.MouseButtonLeft)
+	dst[control.ActionRemoveCube] = source.IsMouseButtonDown(glfw.MouseButtonRight)
 }
 
 func cursorSample(source *platform.Window) engine.CursorSample {
@@ -620,13 +655,20 @@ func clampNormalized(value float32) float32 {
 
 func mergeSnapshots(values ...input.Snapshot) input.Snapshot {
 	merged := make(input.Snapshot)
+	mergedHeldInto(merged, values...)
+	return merged
+}
+
+// mergedHeldInto unions only "down" entries from values into dst without
+// allocating. dst is cleared first so callers can reuse it across frames.
+func mergedHeldInto(dst input.Snapshot, values ...input.Snapshot) {
+	clear(dst)
 	for _, snapshot := range values {
 		for action, down := range snapshot {
 			if !down {
 				continue
 			}
-			merged[action] = true
+			dst[action] = true
 		}
 	}
-	return merged
 }

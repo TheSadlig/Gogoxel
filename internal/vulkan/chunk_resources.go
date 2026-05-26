@@ -214,11 +214,14 @@ func (r *Renderer) createChunkStorageBufferWords(chunk *ChunkResources, words []
 	vk.UnmapMemory(r.device, stagingMemory)
 
 	// ── Device-local buffer (GPU-readable) ───────────────────────────────────
+	chunkSharingMode, chunkSharingCount, chunkSharingIndices := r.crossQueueSharing()
 	deviceCreateInfo := vk.BufferCreateInfo{
-		SType:       vk.StructureTypeBufferCreateInfo,
-		Size:        bufferSize,
-		Usage:       vk.BufferUsageFlags(vk.BufferUsageStorageBufferBit | vk.BufferUsageTransferDstBit),
-		SharingMode: vk.SharingModeExclusive,
+		SType:                 vk.StructureTypeBufferCreateInfo,
+		Size:                  bufferSize,
+		Usage:                 vk.BufferUsageFlags(vk.BufferUsageStorageBufferBit | vk.BufferUsageTransferDstBit),
+		SharingMode:           chunkSharingMode,
+		QueueFamilyIndexCount: chunkSharingCount,
+		PQueueFamilyIndices:   chunkSharingIndices,
 	}
 	if err := withPinnedValue(&chunk.buffer, func() error {
 		return vk.Error(vk.CreateBuffer(r.device, &deviceCreateInfo, nil, &chunk.buffer))
@@ -579,78 +582,17 @@ func (r *Renderer) SubmitOneTimeCommands(record func(vk.CommandBuffer) error) er
 		return errors.New("one-time command recorder is required")
 	}
 
-	commandBuffer, err := r.beginOneTimeCommands()
+	commandBuffer, usedTransferPool, err := r.beginOneTimeTransferCommands()
 	if err != nil {
 		return err
 	}
 
 	if err := record(commandBuffer); err != nil {
-		r.freeOneTimeCommands(commandBuffer)
+		r.freeOneTimeTransferCommands(commandBuffer, usedTransferPool)
 		return err
 	}
 
-	return r.endOneTimeCommands(commandBuffer)
-}
-
-func (r *Renderer) beginOneTimeCommands() (vk.CommandBuffer, error) {
-	commandBuffers := make([]vk.CommandBuffer, 1)
-	var zeroCommandBuffer vk.CommandBuffer
-	allocateInfo := vk.CommandBufferAllocateInfo{
-		SType:              vk.StructureTypeCommandBufferAllocateInfo,
-		CommandPool:        r.commandPool,
-		Level:              vk.CommandBufferLevelPrimary,
-		CommandBufferCount: 1,
-	}
-	if err := withPinnedSlice(commandBuffers, func() error {
-		return vk.Error(vk.AllocateCommandBuffers(r.device, &allocateInfo, commandBuffers))
-	}); err != nil {
-		return zeroCommandBuffer, fmt.Errorf("allocating one-time command buffer: %w", err)
-	}
-
-	beginInfo := vk.CommandBufferBeginInfo{
-		SType: vk.StructureTypeCommandBufferBeginInfo,
-		Flags: vk.CommandBufferUsageFlags(vk.CommandBufferUsageOneTimeSubmitBit),
-	}
-	if err := vk.Error(vk.BeginCommandBuffer(commandBuffers[0], &beginInfo)); err != nil {
-		r.freeOneTimeCommands(commandBuffers[0])
-		return zeroCommandBuffer, fmt.Errorf("beginning one-time command buffer: %w", err)
-	}
-
-	return commandBuffers[0], nil
-}
-
-func (r *Renderer) endOneTimeCommands(commandBuffer vk.CommandBuffer) error {
-	if err := vk.Error(vk.EndCommandBuffer(commandBuffer)); err != nil {
-		r.freeOneTimeCommands(commandBuffer)
-		return fmt.Errorf("ending one-time command buffer: %w", err)
-	}
-
-	commandBuffers := []vk.CommandBuffer{commandBuffer}
-	submitInfos := []vk.SubmitInfo{{
-		SType:              vk.StructureTypeSubmitInfo,
-		CommandBufferCount: 1,
-		PCommandBuffers:    commandBuffers,
-	}}
-	var fence vk.Fence
-	if err := vk.Error(vk.QueueSubmit(r.graphicsQueue, 1, submitInfos, fence)); err != nil {
-		r.freeOneTimeCommands(commandBuffer)
-		return fmt.Errorf("submitting one-time command buffer: %w", err)
-	}
-	if err := vk.Error(vk.QueueWaitIdle(r.graphicsQueue)); err != nil {
-		r.freeOneTimeCommands(commandBuffer)
-		return fmt.Errorf("waiting for one-time command buffer: %w", err)
-	}
-
-	r.freeOneTimeCommands(commandBuffer)
-	return nil
-}
-
-func (r *Renderer) freeOneTimeCommands(commandBuffer vk.CommandBuffer) {
-	if isZeroValue(commandBuffer) || isZeroValue(r.commandPool) {
-		return
-	}
-
-	vk.FreeCommandBuffers(r.device, r.commandPool, 1, []vk.CommandBuffer{commandBuffer})
+	return r.endOneTimeTransferCommands(commandBuffer, usedTransferPool)
 }
 
 func (chunk *ChunkResources) Close() {

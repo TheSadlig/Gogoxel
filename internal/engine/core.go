@@ -267,14 +267,16 @@ func (c *Core) SetHeldActions(snapshot input.Snapshot) {
 	if c == nil {
 		return
 	}
-	next := make(input.Snapshot, len(snapshot))
+	if c.heldActions == nil {
+		c.heldActions = make(input.Snapshot, len(snapshot))
+	}
+	clear(c.heldActions)
 	for action, down := range snapshot {
 		if !down {
 			continue
 		}
-		next[action] = true
+		c.heldActions[action] = true
 	}
-	c.heldActions = next
 }
 
 func (c *Core) PressAction(action input.Action) {

@@ -225,6 +225,9 @@ func (s *SVO) finishSparseVolumeBuild(root *stagingNode) {
 	// scenes otherwise retain both the flat SVO and the full edit tree in RAM.
 	s.editableRoot = nil
 	s.colorToMaterial = nil
+	// SVDAG dedup: collapse identical non-brick subtrees so storage-buffer
+	// uploads and per-frame SSBO indexing shrink without changing visuals.
+	s.DedupNodes()
 	s.rebuildBrickNodeLookup()
 	s.rebuildStorageWords()
 }
@@ -917,6 +920,7 @@ func (s *SVO) buildFromLeafLayer(leafLayer map[uint64]*stagingNode) {
 	s.nodes = make([]SvoNode, 0)
 	s.flattenTree(root)
 	s.editableRoot = nil
+	s.DedupNodes()
 	s.rebuildBrickNodeLookup()
 }
 
