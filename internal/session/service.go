@@ -54,6 +54,12 @@ type MetricsSnapshot struct {
 	// window" budget that any zero-alloc steady state should keep near 0
 	// once the warm-up frames have completed.
 	HeapAllocDeltaBytes uint64
+	// TransferQueueUploadsWindowTotal counts transfer-copy/fill upload ops
+	// recorded on the dedicated transfer queue since the last metrics reset.
+	TransferQueueUploadsWindowTotal uint64
+	TransferUploadPath              string
+	ChunkStorageStrategy            string
+	TraversalAlgorithm              string
 }
 
 type ArtifactInfo struct {

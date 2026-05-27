@@ -121,6 +121,12 @@ float exitTBias(float exitT) {
     return max(BoundaryEpsilon, exitT * 1e-6);
 }
 
+bool pointInsideNode(vec3 point, vec3 origin, float size) {
+    vec3 epsilon = vec3(BoundaryEpsilon);
+    return all(greaterThanEqual(point, origin - epsilon)) &&
+        all(lessThan(point, origin + vec3(size)));
+}
+
 SVONode getSvoNode(uint index) {
     SVONode node;
     uint baseWord = index * 2u;
@@ -354,16 +360,34 @@ vec4 raymarchVoxels(vec3 ro, vec3 rd) {
         mirroredRo.z = sceneSize - mirroredRo.z;
     }
 
+    uint nodeStack[MaxTraversalDepth];
+    vec3 originStack[MaxTraversalDepth];
+    float sizeStack[MaxTraversalDepth];
+    int stackDepth = 1;
+    nodeStack[0] = 0u;
+    originStack[0] = vec3(0.0);
+    sizeStack[0] = sceneSize;
+
     for (int stepIdx = 0; stepIdx < MaxMacroSteps; stepIdx++) {
         if (t >= tMax) {
             break;
         }
 
-        uint currentNodeIdx = 0u;
-        vec3 currentOrigin = vec3(0.0);
-        float currentSize = sceneSize;
+        vec3 currentPos = mirroredRo + mirroredRd * t;
+        while (stackDepth > 1 && !pointInsideNode(currentPos, originStack[stackDepth - 1], sizeStack[stackDepth - 1])) {
+            stackDepth--;
+        }
+        if (!pointInsideNode(currentPos, originStack[0], sizeStack[0])) {
+            break;
+        }
 
-        for (int depth = 0; depth < MaxTraversalDepth; depth++) {
+        vec3 exitOrigin = originStack[stackDepth - 1];
+        float exitSize = sizeStack[stackDepth - 1];
+
+        for (int depth = stackDepth - 1; depth < MaxTraversalDepth; depth++) {
+            uint currentNodeIdx = nodeStack[stackDepth - 1];
+            vec3 currentOrigin = originStack[stackDepth - 1];
+            float currentSize = sizeStack[stackDepth - 1];
             SVONode currentNode = getSvoNode(currentNodeIdx);
             uint childMask = nodeChildMask(currentNode);
 
@@ -381,11 +405,15 @@ vec4 raymarchVoxels(vec3 ro, vec3 rd) {
                         uint hitAxis = hasFaceMask ? resolveFaceAxis(faceMask, rd) : dominantAxis(rd);
                         return shadeMaterial(fallbackMaterialID, axisNormal(hitAxis, rd));
                     }
+                    exitOrigin = currentOrigin;
+                    exitSize = currentSize;
                     break;
                 }
                 if (raymarchBrick(currentNode.childPointer, brickOrigin, ro + rd * t, rd, faceMask, hasFaceMask, hitMaterialID, hitNormal)) {
                     return shadeMaterial(hitMaterialID, hitNormal);
                 }
+                exitOrigin = currentOrigin;
+                exitSize = currentSize;
                 break;
             }
 
@@ -395,6 +423,8 @@ vec4 raymarchVoxels(vec3 ro, vec3 rd) {
             }
 
             if (currentNode.childPointer == 0u || childMask == 0u || currentSize <= 1.0) {
+                exitOrigin = currentOrigin;
+                exitSize = currentSize;
                 break;
             }
 
@@ -411,19 +441,28 @@ vec4 raymarchVoxels(vec3 ro, vec3 rd) {
                 octant |= AXIS_Z;
             }
 
-            currentOrigin += octantOffset(childSize, octant);
-            currentSize = childSize;
+            vec3 childOrigin = currentOrigin + octantOffset(childSize, octant);
 
             uint realOctant = octant ^ octantMask;
             if ((childMask & (1u << realOctant)) == 0u) {
+                exitOrigin = childOrigin;
+                exitSize = childSize;
                 break;
             }
 
             uint maskBefore = childMask & ((1u << realOctant) - 1u);
-            currentNodeIdx = currentNode.childPointer + bitCount(maskBefore);
+            if (stackDepth >= MaxTraversalDepth) {
+                exitOrigin = childOrigin;
+                exitSize = childSize;
+                break;
+            }
+            nodeStack[stackDepth] = currentNode.childPointer + bitCount(maskBefore);
+            originStack[stackDepth] = childOrigin;
+            sizeStack[stackDepth] = childSize;
+            stackDepth++;
         }
 
-        vec3 exitTs = (currentOrigin + vec3(currentSize) - mirroredRo) * invDir;
+        vec3 exitTs = (exitOrigin + vec3(exitSize) - mirroredRo) * invDir;
         float exitT = min(exitTs.x, min(exitTs.y, exitTs.z));
         uint exitMask = exitAxisMask(exitTs, exitT);
         faceMask = exitMask != 0u ? exitMask : dominantAxis(rd);

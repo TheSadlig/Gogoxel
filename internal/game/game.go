@@ -413,6 +413,48 @@ func (g *Game) StreamingStats() vulkan.StreamingStats {
 	return g.chunk.StreamingStats()
 }
 
+func (g *Game) TransferQueueUploadsLastFrame() int {
+	if g == nil || g.renderer == nil {
+		return 0
+	}
+	return g.renderer.TransferQueueUploadsLastFrame()
+}
+
+func (g *Game) TransferQueueUploadsWindowTotal() uint64 {
+	if g == nil || g.renderer == nil {
+		return 0
+	}
+	return g.renderer.TransferQueueUploadsWindowTotal()
+}
+
+func (g *Game) ResetTransferQueueUploadCounter() {
+	if g == nil || g.renderer == nil {
+		return
+	}
+	g.renderer.ResetTransferQueueUploadCounter()
+}
+
+func (g *Game) TransferUploadPath() string {
+	if g == nil || g.renderer == nil {
+		return ""
+	}
+	return g.renderer.TransferUploadPath()
+}
+
+func (g *Game) ChunkStorageStrategy() string {
+	if g == nil || g.renderer == nil {
+		return ""
+	}
+	return g.renderer.ChunkStorageStrategy()
+}
+
+func (g *Game) TraversalAlgorithm() string {
+	if g == nil || g.renderer == nil {
+		return ""
+	}
+	return g.renderer.TraversalAlgorithm()
+}
+
 // LastGPUFrameMs returns the most-recent GPU wall-clock frame time, in
 // milliseconds, sourced from Vulkan timestamp queries. Returns 0 when the
 // renderer is absent or the device does not expose timestamp queries.

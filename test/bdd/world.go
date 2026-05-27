@@ -145,6 +145,10 @@ func InitializeScenario(ctx *godog.ScenarioContext) {
 	ctx.Step(`^the world size should be at least (\d+)$`, harness.expectWorldSizeAtLeast)
 	ctx.Step(`^the metrics window should contain at least (\d+) samples$`, harness.expectMetricSamples)
 	ctx.Step(`^the metrics window should eventually contain at least (\d+) samples within (\d+(?:\.\d+)?) seconds$`, harness.expectMetricSamplesEventually)
+	ctx.Step(`^the transfer queue upload count should be above (\d+) when a dedicated transfer queue is available$`, harness.expectTransferQueueUploadCountAbove)
+	ctx.Step(`^the transfer upload path should be "([^"]+)" or "([^"]+)"$`, harness.expectTransferUploadPathEither)
+	ctx.Step(`^the chunk storage should use the renderer gigabuffer$`, harness.expectChunkStorageUsesGigabuffer)
+	ctx.Step(`^the traversal algorithm should be "([^"]+)"$`, harness.expectTraversalAlgorithm)
 	ctx.Step(`^the current scene should contain at least (\d+) bricks$`, harness.expectBrickCountAtLeast)
 	ctx.Step(`^the average FPS should be above (\d+(?:\.\d+)?)$`, harness.expectAverageFPS)
 	ctx.Step(`^the average FPS should be below (\d+(?:\.\d+)?)$`, harness.expectAverageFPSBelow)
@@ -188,6 +192,55 @@ func (h *scenarioHarness) expectBrickCountAtLeast(expected int) error {
 	h.lastMetrics = metrics
 	if got := int(metrics.BrickCount); got < expected {
 		return fmt.Errorf("metrics.BrickCount = %d, want >= %d", got, expected)
+	}
+	return nil
+}
+
+func (h *scenarioHarness) expectTransferQueueUploadCountAbove(expected int) error {
+	metrics, err := h.refreshMetrics()
+	if err != nil {
+		return err
+	}
+	if metrics.TransferUploadPath != "dedicated-transfer-queue" {
+		return nil
+	}
+	if got := int(metrics.TransferQueueUploadsWindowTotal); got <= expected {
+		return fmt.Errorf("metrics.TransferQueueUploadsWindowTotal = %d, want > %d", got, expected)
+	}
+	return nil
+}
+
+func (h *scenarioHarness) expectTransferUploadPathEither(first, second string) error {
+	metrics, err := h.refreshMetrics()
+	if err != nil {
+		return err
+	}
+	switch metrics.TransferUploadPath {
+	case first, second:
+		return nil
+	default:
+		return fmt.Errorf("metrics.TransferUploadPath = %q, want %q or %q", metrics.TransferUploadPath, first, second)
+	}
+}
+
+func (h *scenarioHarness) expectChunkStorageUsesGigabuffer() error {
+	metrics, err := h.refreshMetrics()
+	if err != nil {
+		return err
+	}
+	if metrics.ChunkStorageStrategy != "gigabuffer" {
+		return fmt.Errorf("metrics.ChunkStorageStrategy = %q, want %q", metrics.ChunkStorageStrategy, "gigabuffer")
+	}
+	return nil
+}
+
+func (h *scenarioHarness) expectTraversalAlgorithm(expected string) error {
+	metrics, err := h.refreshMetrics()
+	if err != nil {
+		return err
+	}
+	if metrics.TraversalAlgorithm != expected {
+		return fmt.Errorf("metrics.TraversalAlgorithm = %q, want %q", metrics.TraversalAlgorithm, expected)
 	}
 	return nil
 }
@@ -946,13 +999,29 @@ func gogoxelBinaryPath() (string, error) {
 
 func bddChunkRoot() (string, error) {
 	bddChunkRootOnce.Do(func() {
+		if root := strings.TrimSpace(os.Getenv("GOGOXEL_BDD_CHUNK_ROOT")); root != "" {
+			if !filepath.IsAbs(root) {
+				root = filepath.Join(workspaceRoot(), root)
+			}
+			info, err := os.Stat(root)
+			if err != nil {
+				bddChunkRootErr = err
+				return
+			}
+			if !info.IsDir() {
+				bddChunkRootErr = fmt.Errorf("GOGOXEL_BDD_CHUNK_ROOT is not a directory: %s", root)
+				return
+			}
+			bddChunkRootPath = root
+			return
+		}
 		root, err := os.MkdirTemp("", "gogoxel-bdd-chunks-")
 		if err != nil {
 			bddChunkRootErr = err
 			return
 		}
 		mapDir := generators.GeneratedChunkMapDir(root, "Perlin Terrain")
-		request := generators.BuildRequest{ChunkX: 4, ChunkY: -7, ChunkRange: 34}
+		request := generators.BuildRequest{ChunkX: 4, ChunkY: -7, ChunkRange: 36}
 		if err := generators.GenerateChunkMapWindow(mapDir, generators.NewPerlinGenerator(1, 2), request); err != nil {
 			bddChunkRootErr = err
 			return

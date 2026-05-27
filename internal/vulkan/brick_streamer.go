@@ -134,13 +134,13 @@ type brickStreamer struct {
 	// Reused planner scratch — all owned by the streamer to keep the hot
 	// path zero-alloc after warm-up. Caller must consume returned plans
 	// before the next planner call.
-	desiredHeap         brickPriorityHeap
-	planScratch         streamPlan
-	desiredSetScratch   map[int]struct{}
+	desiredHeap           brickPriorityHeap
+	planScratch           streamPlan
+	desiredSetScratch     map[int]struct{}
 	residentOriginScratch map[[3]int32]residentOrigin
-	newResidentScratch  map[int]residentBrick
-	sceneUpdateScratch  sceneUpdatePlan
-	snapshotScratch     []streamBrick
+	newResidentScratch    map[int]residentBrick
+	sceneUpdateScratch    sceneUpdatePlan
+	snapshotScratch       []streamBrick
 
 	stopCh   chan struct{}
 	doneCh   chan struct{}
@@ -1142,16 +1142,7 @@ func (chunk *ChunkResources) RecordStreaming(frame *Frame) error {
 
 func (chunk *ChunkResources) recordPlan(frame *Frame, plan streamPlan) error {
 	if len(plan.uploads) > 0 {
-		frame.renderer.transitionImageLayout(
-			frame.CommandBuffer,
-			chunk.brickPool.image,
-			vk.ImageLayoutShaderReadOnlyOptimal,
-			vk.ImageLayoutTransferDstOptimal,
-			vk.AccessFlags(vk.AccessShaderReadBit),
-			vk.AccessFlags(vk.AccessTransferWriteBit),
-			vk.PipelineStageFlags(vk.PipelineStageFragmentShaderBit),
-			vk.PipelineStageFlags(vk.PipelineStageTransferBit),
-		)
+		frame.renderer.transitionChunkTransferDst(frame, chunk.brickPool.image)
 	}
 
 	bufferTouched := false
@@ -1184,20 +1175,11 @@ func (chunk *ChunkResources) recordPlan(frame *Frame, plan streamPlan) error {
 	}
 
 	if len(plan.uploads) > 0 {
-		frame.renderer.transitionImageLayout(
-			frame.CommandBuffer,
-			chunk.brickPool.image,
-			vk.ImageLayoutTransferDstOptimal,
-			vk.ImageLayoutShaderReadOnlyOptimal,
-			vk.AccessFlags(vk.AccessTransferWriteBit),
-			vk.AccessFlags(vk.AccessShaderReadBit),
-			vk.PipelineStageFlags(vk.PipelineStageTransferBit),
-			vk.PipelineStageFlags(vk.PipelineStageFragmentShaderBit),
-		)
+		frame.renderer.transitionChunkShaderRead(frame, chunk.brickPool.image)
 	}
 
-	if bufferTouched {
-		frame.renderer.recordBufferShaderBarrier(frame.CommandBuffer, chunk.buffer, chunk.bufferBytes)
+	if bufferTouched && frame.TransferCommandBuffer == frame.CommandBuffer {
+		frame.renderer.recordBufferShaderBarrier(frame.CommandBuffer, chunk.buffer, chunk.bufferOffset, chunk.bufferBytes)
 	}
 
 	return nil
@@ -1207,12 +1189,13 @@ func (chunk *ChunkResources) recordPlan(frame *Frame, plan streamPlan) error {
 // childPointer in place — no staging buffer or cleanup required.
 func (chunk *ChunkResources) patchNodePointer(frame *Frame, nodeIndex, value uint32) {
 	vk.CmdFillBuffer(
-		frame.CommandBuffer,
+		frame.TransferCommands(),
 		chunk.buffer,
-		nodeChildPointerByteOffset(nodeIndex),
+		chunk.bufferOffset+nodeChildPointerByteOffset(nodeIndex),
 		vk.DeviceSize(4),
 		value,
 	)
+	frame.RecordTransferUploads(1)
 }
 
 func (chunk *ChunkResources) recordBrickUpload(frame *Frame, logicalIndex int, slot uint32) error {
@@ -1253,7 +1236,8 @@ func (chunk *ChunkResources) recordBrickUpload(frame *Frame, logicalIndex int, s
 			Depth:  brickSizeVoxels,
 		},
 	}}
-	vk.CmdCopyBufferToImage(frame.CommandBuffer, stagingBuffer, chunk.brickPool.image, vk.ImageLayoutTransferDstOptimal, uint32(len(regions)), regions)
+	vk.CmdCopyBufferToImage(frame.TransferCommands(), stagingBuffer, chunk.brickPool.image, vk.ImageLayoutTransferDstOptimal, uint32(len(regions)), regions)
+	frame.RecordTransferUploads(1)
 	return nil
 }
 
@@ -1266,7 +1250,7 @@ func nodeChildPointerByteOffset(nodeIndex uint32) vk.DeviceSize {
 // any two transfer writes) target overlapping regions of the same buffer:
 // without it the GPU may reorder the writes, leaving the earlier write's data
 // overwritten or invisible to the later write.
-func (r *Renderer) recordBufferTransferBarrier(commandBuffer vk.CommandBuffer, buffer vk.Buffer, size vk.DeviceSize) {
+func (r *Renderer) recordBufferTransferBarrier(commandBuffer vk.CommandBuffer, buffer vk.Buffer, offset, size vk.DeviceSize) {
 	barriers := []vk.BufferMemoryBarrier{{
 		SType:               vk.StructureTypeBufferMemoryBarrier,
 		SrcAccessMask:       vk.AccessFlags(vk.AccessTransferWriteBit),
@@ -1274,7 +1258,7 @@ func (r *Renderer) recordBufferTransferBarrier(commandBuffer vk.CommandBuffer, b
 		SrcQueueFamilyIndex: vk.QueueFamilyIgnored,
 		DstQueueFamilyIndex: vk.QueueFamilyIgnored,
 		Buffer:              buffer,
-		Offset:              0,
+		Offset:              offset,
 		Size:                size,
 	}}
 	vk.CmdPipelineBarrier(
@@ -1291,7 +1275,7 @@ func (r *Renderer) recordBufferTransferBarrier(commandBuffer vk.CommandBuffer, b
 	)
 }
 
-func (r *Renderer) recordBufferShaderBarrier(commandBuffer vk.CommandBuffer, buffer vk.Buffer, size vk.DeviceSize) {
+func (r *Renderer) recordBufferShaderBarrier(commandBuffer vk.CommandBuffer, buffer vk.Buffer, offset, size vk.DeviceSize) {
 	barriers := []vk.BufferMemoryBarrier{{
 		SType:               vk.StructureTypeBufferMemoryBarrier,
 		SrcAccessMask:       vk.AccessFlags(vk.AccessTransferWriteBit),
@@ -1299,7 +1283,7 @@ func (r *Renderer) recordBufferShaderBarrier(commandBuffer vk.CommandBuffer, buf
 		SrcQueueFamilyIndex: vk.QueueFamilyIgnored,
 		DstQueueFamilyIndex: vk.QueueFamilyIgnored,
 		Buffer:              buffer,
-		Offset:              0,
+		Offset:              offset,
 		Size:                size,
 	}}
 	vk.CmdPipelineBarrier(
@@ -1313,5 +1297,65 @@ func (r *Renderer) recordBufferShaderBarrier(commandBuffer vk.CommandBuffer, buf
 		barriers,
 		0,
 		nil,
+	)
+}
+
+func (r *Renderer) transitionChunkTransferDst(frame *Frame, image vk.Image) {
+	if frame == nil {
+		return
+	}
+	commandBuffer := frame.TransferCommands()
+	if commandBuffer == frame.CommandBuffer {
+		r.transitionImageLayout(
+			commandBuffer,
+			image,
+			vk.ImageLayoutShaderReadOnlyOptimal,
+			vk.ImageLayoutTransferDstOptimal,
+			vk.AccessFlags(vk.AccessShaderReadBit),
+			vk.AccessFlags(vk.AccessTransferWriteBit),
+			vk.PipelineStageFlags(vk.PipelineStageFragmentShaderBit),
+			vk.PipelineStageFlags(vk.PipelineStageTransferBit),
+		)
+		return
+	}
+	r.transitionImageLayout(
+		commandBuffer,
+		image,
+		vk.ImageLayoutShaderReadOnlyOptimal,
+		vk.ImageLayoutTransferDstOptimal,
+		0,
+		vk.AccessFlags(vk.AccessTransferWriteBit),
+		vk.PipelineStageFlags(vk.PipelineStageTopOfPipeBit),
+		vk.PipelineStageFlags(vk.PipelineStageTransferBit),
+	)
+}
+
+func (r *Renderer) transitionChunkShaderRead(frame *Frame, image vk.Image) {
+	if frame == nil {
+		return
+	}
+	commandBuffer := frame.TransferCommands()
+	if commandBuffer == frame.CommandBuffer {
+		r.transitionImageLayout(
+			commandBuffer,
+			image,
+			vk.ImageLayoutTransferDstOptimal,
+			vk.ImageLayoutShaderReadOnlyOptimal,
+			vk.AccessFlags(vk.AccessTransferWriteBit),
+			vk.AccessFlags(vk.AccessShaderReadBit),
+			vk.PipelineStageFlags(vk.PipelineStageTransferBit),
+			vk.PipelineStageFlags(vk.PipelineStageFragmentShaderBit),
+		)
+		return
+	}
+	r.transitionImageLayout(
+		commandBuffer,
+		image,
+		vk.ImageLayoutTransferDstOptimal,
+		vk.ImageLayoutShaderReadOnlyOptimal,
+		vk.AccessFlags(vk.AccessTransferWriteBit),
+		0,
+		vk.PipelineStageFlags(vk.PipelineStageTransferBit),
+		vk.PipelineStageFlags(vk.PipelineStageBottomOfPipeBit),
 	)
 }

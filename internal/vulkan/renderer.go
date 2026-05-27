@@ -52,26 +52,35 @@ type Renderer struct {
 
 	renderPass vk.RenderPass
 
-	commandPool         vk.CommandPool
-	transferCommandPool vk.CommandPool
-	commandBuffers      []vk.CommandBuffer
+	commandPool            vk.CommandPool
+	transferCommandPool    vk.CommandPool
+	commandBuffers         []vk.CommandBuffer
+	transferCommandBuffers []vk.CommandBuffer
 
-	imageAvailableSemaphores []vk.Semaphore
-	renderFinishedSemaphores []vk.Semaphore
-	inFlightFences           []vk.Fence
-	imagesInFlight           []vk.Fence
-	currentFrame             int
-	frameReleases            [][]func()
+	imageAvailableSemaphores   []vk.Semaphore
+	renderFinishedSemaphores   []vk.Semaphore
+	transferFinishedSemaphores []vk.Semaphore
+	graphicsFinishedSemaphores []vk.Semaphore
+	inFlightFences             []vk.Fence
+	imagesInFlight             []vk.Fence
+	currentFrame               int
+	frameReleases              [][]func()
+	graphicsSubmitCount        uint64
 
 	// memoryProperties is cached once after physical-device selection so
 	// hot paths (staging allocation) don't re-query Vulkan every call.
-	memoryProperties vk.PhysicalDeviceMemoryProperties
+	memoryProperties             vk.PhysicalDeviceMemoryProperties
+	storageBufferOffsetAlignment vk.DeviceSize
 
 	// stagingRings provides one persistent host-coherent staging buffer per
 	// in-flight frame slot. Sub-allocations are bump-pointer; the offset is
 	// reset whenever the slot's fence has been waited on.
-	stagingRings  [maxFramesInFlight]*stagingRing
-	sharedAirPool *brickPool
+	stagingRings    [maxFramesInFlight]*stagingRing
+	sharedAirPool   *brickPool
+	chunkGigabuffer chunkGigabuffer
+
+	lastTransferUploadCount  int
+	transferQueueUploadCount uint64
 
 	// gpuTimestamps measures wall-clock GPU work per frame slot via Vulkan
 	// timestamp queries. nil when the device has no usable timestamp period.
@@ -151,6 +160,9 @@ func (r *Renderer) initVulkan() error {
 	if err := r.createSyncObjects(); err != nil {
 		return err
 	}
+	if err := r.createChunkGigabuffer(); err != nil {
+		return err
+	}
 	if err := r.initStagingRings(); err != nil {
 		return err
 	}
@@ -224,6 +236,7 @@ func (r *Renderer) pickPhysicalDevice() error {
 		if props.Limits.TimestampComputeAndGraphics != vk.False {
 			r.timestampPeriodNs = props.Limits.TimestampPeriod
 		}
+		r.storageBufferOffsetAlignment = vk.DeviceSize(props.Limits.MinStorageBufferOffsetAlignment)
 		vk.GetPhysicalDeviceMemoryProperties(device, &r.memoryProperties)
 		r.memoryProperties.Deref()
 		fmt.Printf("[vulkan] physical device: %s (timestamp period: %.2f ns)\n", r.physicalDeviceName, r.timestampPeriodNs)
@@ -463,6 +476,7 @@ func (r *Renderer) cleanupVulkan() {
 		r.sharedAirPool.Close(r.device)
 		r.sharedAirPool = nil
 	}
+	r.chunkGigabuffer.Close()
 
 	for _, semaphore := range r.imageAvailableSemaphores {
 		if !isZeroValue(semaphore) {
@@ -470,6 +484,16 @@ func (r *Renderer) cleanupVulkan() {
 		}
 	}
 	for _, semaphore := range r.renderFinishedSemaphores {
+		if !isZeroValue(semaphore) {
+			vk.DestroySemaphore(r.device, semaphore, nil)
+		}
+	}
+	for _, semaphore := range r.transferFinishedSemaphores {
+		if !isZeroValue(semaphore) {
+			vk.DestroySemaphore(r.device, semaphore, nil)
+		}
+	}
+	for _, semaphore := range r.graphicsFinishedSemaphores {
 		if !isZeroValue(semaphore) {
 			vk.DestroySemaphore(r.device, semaphore, nil)
 		}
@@ -523,7 +547,51 @@ func (r *Renderer) runDeferredReleases(frameSlot int) {
 		release()
 	}
 	r.frameReleases[frameSlot] = r.frameReleases[frameSlot][:0]
-	r.resetStagingRing(frameSlot)
+}
+
+func (r *Renderer) TransferQueueUploadsLastFrame() int {
+	if r == nil {
+		return 0
+	}
+	return r.lastTransferUploadCount
+}
+
+func (r *Renderer) TransferQueueUploadsWindowTotal() uint64 {
+	if r == nil {
+		return 0
+	}
+	return r.transferQueueUploadCount
+}
+
+func (r *Renderer) TransferUploadPath() string {
+	if r == nil {
+		return ""
+	}
+	if r.hasDedicatedTransferQueue {
+		return "dedicated-transfer-queue"
+	}
+	return "graphics-fallback"
+}
+
+func (r *Renderer) ResetTransferQueueUploadCounter() {
+	if r == nil {
+		return
+	}
+	r.transferQueueUploadCount = 0
+}
+
+func (r *Renderer) ChunkStorageStrategy() string {
+	if r == nil || isZeroValue(r.chunkGigabuffer.buffer) {
+		return ""
+	}
+	return "gigabuffer"
+}
+
+func (r *Renderer) TraversalAlgorithm() string {
+	if r == nil {
+		return ""
+	}
+	return "explicit-stack"
 }
 
 func (r *Renderer) DeviceName() string {

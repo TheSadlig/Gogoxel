@@ -428,33 +428,37 @@ func (x *WaitCriteria) GetMaxTicks() uint32 {
 }
 
 type MetricsSnapshot struct {
-	state                        protoimpl.MessageState `protogen:"open.v1"`
-	Camera                       *Camera                `protobuf:"bytes,1,opt,name=camera,proto3" json:"camera,omitempty"`
-	CurrentGenerator             string                 `protobuf:"bytes,2,opt,name=current_generator,json=currentGenerator,proto3" json:"current_generator,omitempty"`
-	RamBytes                     uint64                 `protobuf:"varint,3,opt,name=ram_bytes,json=ramBytes,proto3" json:"ram_bytes,omitempty"`
-	SystemRamBytes               uint64                 `protobuf:"varint,4,opt,name=system_ram_bytes,json=systemRamBytes,proto3" json:"system_ram_bytes,omitempty"`
-	VramBytes                    uint64                 `protobuf:"varint,5,opt,name=vram_bytes,json=vramBytes,proto3" json:"vram_bytes,omitempty"`
-	ChunkRamBytes                uint64                 `protobuf:"varint,6,opt,name=chunk_ram_bytes,json=chunkRamBytes,proto3" json:"chunk_ram_bytes,omitempty"`
-	NodeCount                    uint64                 `protobuf:"varint,7,opt,name=node_count,json=nodeCount,proto3" json:"node_count,omitempty"`
-	BrickCount                   uint64                 `protobuf:"varint,8,opt,name=brick_count,json=brickCount,proto3" json:"brick_count,omitempty"`
-	WorldSize                    uint64                 `protobuf:"varint,9,opt,name=world_size,json=worldSize,proto3" json:"world_size,omitempty"`
-	ResidentBrickCount           uint64                 `protobuf:"varint,10,opt,name=resident_brick_count,json=residentBrickCount,proto3" json:"resident_brick_count,omitempty"`
-	StreamingDesiredReady        bool                   `protobuf:"varint,11,opt,name=streaming_desired_ready,json=streamingDesiredReady,proto3" json:"streaming_desired_ready,omitempty"`
-	StreamingPendingDesiredCount uint64                 `protobuf:"varint,12,opt,name=streaming_pending_desired_count,json=streamingPendingDesiredCount,proto3" json:"streaming_pending_desired_count,omitempty"`
-	StreamingResidentLimit       uint64                 `protobuf:"varint,13,opt,name=streaming_resident_limit,json=streamingResidentLimit,proto3" json:"streaming_resident_limit,omitempty"`
-	StreamingUploadBudget        uint64                 `protobuf:"varint,14,opt,name=streaming_upload_budget,json=streamingUploadBudget,proto3" json:"streaming_upload_budget,omitempty"`
-	PresentMode                  string                 `protobuf:"bytes,15,opt,name=present_mode,json=presentMode,proto3" json:"present_mode,omitempty"`
-	RendererDevice               string                 `protobuf:"bytes,16,opt,name=renderer_device,json=rendererDevice,proto3" json:"renderer_device,omitempty"`
-	AverageFps                   float64                `protobuf:"fixed64,17,opt,name=average_fps,json=averageFps,proto3" json:"average_fps,omitempty"`
-	AverageFrameTimeMs           float64                `protobuf:"fixed64,18,opt,name=average_frame_time_ms,json=averageFrameTimeMs,proto3" json:"average_frame_time_ms,omitempty"`
-	P95FrameTimeMs               float64                `protobuf:"fixed64,19,opt,name=p95_frame_time_ms,json=p95FrameTimeMs,proto3" json:"p95_frame_time_ms,omitempty"`
-	FrameSampleCount             uint64                 `protobuf:"varint,20,opt,name=frame_sample_count,json=frameSampleCount,proto3" json:"frame_sample_count,omitempty"`
-	AverageGpuFrameTimeMs        float64                `protobuf:"fixed64,21,opt,name=average_gpu_frame_time_ms,json=averageGpuFrameTimeMs,proto3" json:"average_gpu_frame_time_ms,omitempty"`
-	P95GpuFrameTimeMs            float64                `protobuf:"fixed64,22,opt,name=p95_gpu_frame_time_ms,json=p95GpuFrameTimeMs,proto3" json:"p95_gpu_frame_time_ms,omitempty"`
-	GpuFrameSampleCount          uint64                 `protobuf:"varint,23,opt,name=gpu_frame_sample_count,json=gpuFrameSampleCount,proto3" json:"gpu_frame_sample_count,omitempty"`
-	HeapAllocDeltaBytes          uint64                 `protobuf:"varint,24,opt,name=heap_alloc_delta_bytes,json=heapAllocDeltaBytes,proto3" json:"heap_alloc_delta_bytes,omitempty"`
-	unknownFields                protoimpl.UnknownFields
-	sizeCache                    protoimpl.SizeCache
+	state                           protoimpl.MessageState `protogen:"open.v1"`
+	Camera                          *Camera                `protobuf:"bytes,1,opt,name=camera,proto3" json:"camera,omitempty"`
+	CurrentGenerator                string                 `protobuf:"bytes,2,opt,name=current_generator,json=currentGenerator,proto3" json:"current_generator,omitempty"`
+	RamBytes                        uint64                 `protobuf:"varint,3,opt,name=ram_bytes,json=ramBytes,proto3" json:"ram_bytes,omitempty"`
+	SystemRamBytes                  uint64                 `protobuf:"varint,4,opt,name=system_ram_bytes,json=systemRamBytes,proto3" json:"system_ram_bytes,omitempty"`
+	VramBytes                       uint64                 `protobuf:"varint,5,opt,name=vram_bytes,json=vramBytes,proto3" json:"vram_bytes,omitempty"`
+	ChunkRamBytes                   uint64                 `protobuf:"varint,6,opt,name=chunk_ram_bytes,json=chunkRamBytes,proto3" json:"chunk_ram_bytes,omitempty"`
+	NodeCount                       uint64                 `protobuf:"varint,7,opt,name=node_count,json=nodeCount,proto3" json:"node_count,omitempty"`
+	BrickCount                      uint64                 `protobuf:"varint,8,opt,name=brick_count,json=brickCount,proto3" json:"brick_count,omitempty"`
+	WorldSize                       uint64                 `protobuf:"varint,9,opt,name=world_size,json=worldSize,proto3" json:"world_size,omitempty"`
+	ResidentBrickCount              uint64                 `protobuf:"varint,10,opt,name=resident_brick_count,json=residentBrickCount,proto3" json:"resident_brick_count,omitempty"`
+	StreamingDesiredReady           bool                   `protobuf:"varint,11,opt,name=streaming_desired_ready,json=streamingDesiredReady,proto3" json:"streaming_desired_ready,omitempty"`
+	StreamingPendingDesiredCount    uint64                 `protobuf:"varint,12,opt,name=streaming_pending_desired_count,json=streamingPendingDesiredCount,proto3" json:"streaming_pending_desired_count,omitempty"`
+	StreamingResidentLimit          uint64                 `protobuf:"varint,13,opt,name=streaming_resident_limit,json=streamingResidentLimit,proto3" json:"streaming_resident_limit,omitempty"`
+	StreamingUploadBudget           uint64                 `protobuf:"varint,14,opt,name=streaming_upload_budget,json=streamingUploadBudget,proto3" json:"streaming_upload_budget,omitempty"`
+	PresentMode                     string                 `protobuf:"bytes,15,opt,name=present_mode,json=presentMode,proto3" json:"present_mode,omitempty"`
+	RendererDevice                  string                 `protobuf:"bytes,16,opt,name=renderer_device,json=rendererDevice,proto3" json:"renderer_device,omitempty"`
+	AverageFps                      float64                `protobuf:"fixed64,17,opt,name=average_fps,json=averageFps,proto3" json:"average_fps,omitempty"`
+	AverageFrameTimeMs              float64                `protobuf:"fixed64,18,opt,name=average_frame_time_ms,json=averageFrameTimeMs,proto3" json:"average_frame_time_ms,omitempty"`
+	P95FrameTimeMs                  float64                `protobuf:"fixed64,19,opt,name=p95_frame_time_ms,json=p95FrameTimeMs,proto3" json:"p95_frame_time_ms,omitempty"`
+	FrameSampleCount                uint64                 `protobuf:"varint,20,opt,name=frame_sample_count,json=frameSampleCount,proto3" json:"frame_sample_count,omitempty"`
+	AverageGpuFrameTimeMs           float64                `protobuf:"fixed64,21,opt,name=average_gpu_frame_time_ms,json=averageGpuFrameTimeMs,proto3" json:"average_gpu_frame_time_ms,omitempty"`
+	P95GpuFrameTimeMs               float64                `protobuf:"fixed64,22,opt,name=p95_gpu_frame_time_ms,json=p95GpuFrameTimeMs,proto3" json:"p95_gpu_frame_time_ms,omitempty"`
+	GpuFrameSampleCount             uint64                 `protobuf:"varint,23,opt,name=gpu_frame_sample_count,json=gpuFrameSampleCount,proto3" json:"gpu_frame_sample_count,omitempty"`
+	HeapAllocDeltaBytes             uint64                 `protobuf:"varint,24,opt,name=heap_alloc_delta_bytes,json=heapAllocDeltaBytes,proto3" json:"heap_alloc_delta_bytes,omitempty"`
+	TransferQueueUploadsWindowTotal uint64                 `protobuf:"varint,25,opt,name=transfer_queue_uploads_window_total,json=transferQueueUploadsWindowTotal,proto3" json:"transfer_queue_uploads_window_total,omitempty"`
+	TransferUploadPath              string                 `protobuf:"bytes,26,opt,name=transfer_upload_path,json=transferUploadPath,proto3" json:"transfer_upload_path,omitempty"`
+	ChunkStorageStrategy            string                 `protobuf:"bytes,27,opt,name=chunk_storage_strategy,json=chunkStorageStrategy,proto3" json:"chunk_storage_strategy,omitempty"`
+	TraversalAlgorithm              string                 `protobuf:"bytes,28,opt,name=traversal_algorithm,json=traversalAlgorithm,proto3" json:"traversal_algorithm,omitempty"`
+	unknownFields                   protoimpl.UnknownFields
+	sizeCache                       protoimpl.SizeCache
 }
 
 func (x *MetricsSnapshot) Reset() {
@@ -653,6 +657,34 @@ func (x *MetricsSnapshot) GetHeapAllocDeltaBytes() uint64 {
 		return x.HeapAllocDeltaBytes
 	}
 	return 0
+}
+
+func (x *MetricsSnapshot) GetTransferQueueUploadsWindowTotal() uint64 {
+	if x != nil {
+		return x.TransferQueueUploadsWindowTotal
+	}
+	return 0
+}
+
+func (x *MetricsSnapshot) GetTransferUploadPath() string {
+	if x != nil {
+		return x.TransferUploadPath
+	}
+	return ""
+}
+
+func (x *MetricsSnapshot) GetChunkStorageStrategy() string {
+	if x != nil {
+		return x.ChunkStorageStrategy
+	}
+	return ""
+}
+
+func (x *MetricsSnapshot) GetTraversalAlgorithm() string {
+	if x != nil {
+		return x.TraversalAlgorithm
+	}
+	return ""
 }
 
 type Artifact struct {
@@ -2276,7 +2308,8 @@ const file_gogoxel_automation_v1_automation_proto_rawDesc = "" +
 	"\x10require_renderer\x18\x01 \x01(\bR\x0frequireRenderer\x120\n" +
 	"\x14require_scene_loaded\x18\x02 \x01(\bR\x12requireSceneLoaded\x12:\n" +
 	"\x19require_streaming_settled\x18\x03 \x01(\bR\x17requireStreamingSettled\x12\x1b\n" +
-	"\tmax_ticks\x18\x04 \x01(\rR\bmaxTicks\"\xd4\b\n" +
+	"\tmax_ticks\x18\x04 \x01(\rR\bmaxTicks\"\xbb\n" +
+	"\n" +
 	"\x0fMetricsSnapshot\x125\n" +
 	"\x06camera\x18\x01 \x01(\v2\x1d.gogoxel.automation.v1.CameraR\x06camera\x12+\n" +
 	"\x11current_generator\x18\x02 \x01(\tR\x10currentGenerator\x12\x1b\n" +
@@ -2307,7 +2340,11 @@ const file_gogoxel_automation_v1_automation_proto_rawDesc = "" +
 	"\x19average_gpu_frame_time_ms\x18\x15 \x01(\x01R\x15averageGpuFrameTimeMs\x120\n" +
 	"\x15p95_gpu_frame_time_ms\x18\x16 \x01(\x01R\x11p95GpuFrameTimeMs\x123\n" +
 	"\x16gpu_frame_sample_count\x18\x17 \x01(\x04R\x13gpuFrameSampleCount\x123\n" +
-	"\x16heap_alloc_delta_bytes\x18\x18 \x01(\x04R\x13heapAllocDeltaBytes\"q\n" +
+	"\x16heap_alloc_delta_bytes\x18\x18 \x01(\x04R\x13heapAllocDeltaBytes\x12L\n" +
+	"#transfer_queue_uploads_window_total\x18\x19 \x01(\x04R\x1ftransferQueueUploadsWindowTotal\x120\n" +
+	"\x14transfer_upload_path\x18\x1a \x01(\tR\x12transferUploadPath\x124\n" +
+	"\x16chunk_storage_strategy\x18\x1b \x01(\tR\x14chunkStorageStrategy\x12/\n" +
+	"\x13traversal_algorithm\x18\x1c \x01(\tR\x12traversalAlgorithm\"q\n" +
 	"\bArtifact\x12\x12\n" +
 	"\x04kind\x18\x01 \x01(\tR\x04kind\x12%\n" +
 	"\x0erequested_name\x18\x02 \x01(\tR\rrequestedName\x12\x12\n" +

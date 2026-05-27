@@ -11,12 +11,15 @@ import (
 )
 
 type Frame struct {
-	renderer       *Renderer
-	CommandBuffer  vk.CommandBuffer
-	ImageIndex     uint32
-	FrameSlot      int
-	Extent         vk.Extent2D
-	renderPassOpen bool
+	renderer              *Renderer
+	CommandBuffer         vk.CommandBuffer
+	TransferCommandBuffer vk.CommandBuffer
+	ImageIndex            uint32
+	FrameSlot             int
+	Extent                vk.Extent2D
+	renderPassOpen        bool
+	transferRecorded      bool
+	transferUploadCount   int
 }
 
 func (f *Frame) Draw(vertexCount, instanceCount, firstVertex, firstInstance uint32) {
@@ -57,6 +60,26 @@ func (f *Frame) EndRenderPass() {
 	f.renderPassOpen = false
 }
 
+func (f *Frame) TransferCommands() vk.CommandBuffer {
+	if f == nil || isZeroValue(f.TransferCommandBuffer) {
+		var zero vk.CommandBuffer
+		return zero
+	}
+	if f.TransferCommandBuffer != f.CommandBuffer {
+		f.transferRecorded = true
+	}
+	return f.TransferCommandBuffer
+}
+
+func (f *Frame) RecordTransferUploads(count int) {
+	if f == nil || count <= 0 {
+		return
+	}
+	if f.TransferCommandBuffer != f.CommandBuffer {
+		f.transferUploadCount += count
+	}
+}
+
 func (r *Renderer) allocateCommandBuffers() error {
 	r.commandBuffers = make([]vk.CommandBuffer, len(r.swapchainFramebuffers))
 	allocateInfo := vk.CommandBufferAllocateInfo{
@@ -70,6 +93,20 @@ func (r *Renderer) allocateCommandBuffers() error {
 	}); err != nil {
 		return fmt.Errorf("allocating command buffers: %w", err)
 	}
+	if r.hasDedicatedTransferQueue {
+		r.transferCommandBuffers = make([]vk.CommandBuffer, maxFramesInFlight)
+		transferAllocateInfo := vk.CommandBufferAllocateInfo{
+			SType:              vk.StructureTypeCommandBufferAllocateInfo,
+			CommandPool:        r.transferCommandPool,
+			Level:              vk.CommandBufferLevelPrimary,
+			CommandBufferCount: uint32(len(r.transferCommandBuffers)),
+		}
+		if err := withPinnedSlice(r.transferCommandBuffers, func() error {
+			return vk.Error(vk.AllocateCommandBuffers(r.device, &transferAllocateInfo, r.transferCommandBuffers))
+		}); err != nil {
+			return fmt.Errorf("allocating transfer command buffers: %w", err)
+		}
+	}
 
 	return nil
 }
@@ -78,6 +115,10 @@ func (r *Renderer) createSyncObjects() error {
 	r.imageAvailableSemaphores = make([]vk.Semaphore, maxFramesInFlight)
 	r.inFlightFences = make([]vk.Fence, maxFramesInFlight)
 	r.renderFinishedSemaphores = make([]vk.Semaphore, len(r.swapchainImages))
+	if r.hasDedicatedTransferQueue {
+		r.transferFinishedSemaphores = make([]vk.Semaphore, maxFramesInFlight)
+		r.graphicsFinishedSemaphores = make([]vk.Semaphore, maxFramesInFlight)
+	}
 	r.imagesInFlight = make([]vk.Fence, len(r.swapchainImages))
 	r.frameReleases = make([][]func(), maxFramesInFlight)
 	r.currentFrame = 0
@@ -102,6 +143,20 @@ func (r *Renderer) createSyncObjects() error {
 			return fmt.Errorf("creating render-finished semaphore %d: %w", index, err)
 		}
 		r.renderFinishedSemaphores[index] = semaphore
+	}
+	for index := range r.transferFinishedSemaphores {
+		semaphore, err := vkbridge.CreateSemaphore(r.device)
+		if err != nil {
+			return fmt.Errorf("creating transfer-finished semaphore %d: %w", index, err)
+		}
+		r.transferFinishedSemaphores[index] = semaphore
+	}
+	for index := range r.graphicsFinishedSemaphores {
+		semaphore, err := vkbridge.CreateSemaphore(r.device)
+		if err != nil {
+			return fmt.Errorf("creating graphics-finished semaphore %d: %w", index, err)
+		}
+		r.graphicsFinishedSemaphores[index] = semaphore
 	}
 
 	return nil
@@ -147,7 +202,8 @@ func (r *Renderer) drawFrame(record func(*Frame) error, afterRecord func(*Frame)
 		return fmt.Errorf("resetting in-flight fence: %w", err)
 	}
 
-	if err := r.recordCommandBuffer(currentFrame, imageIndex, record, afterRecord); err != nil {
+	frame, err := r.recordCommandBuffer(currentFrame, imageIndex, record, afterRecord)
+	if err != nil {
 		return err
 	}
 
@@ -155,27 +211,63 @@ func (r *Renderer) drawFrame(record func(*Frame) error, afterRecord func(*Frame)
 	waitStages := []vk.PipelineStageFlags{vk.PipelineStageFlags(vk.PipelineStageColorAttachmentOutputBit)}
 	commandBuffers := []vk.CommandBuffer{r.commandBuffers[imageIndex]}
 	signalSemaphores := []vk.Semaphore{r.renderFinishedSemaphores[imageIndex]}
+	if r.hasDedicatedTransferQueue {
+		if frame.transferRecorded {
+			transferCommandBuffers := []vk.CommandBuffer{r.transferCommandBuffers[currentFrame]}
+			transferSignalSemaphores := []vk.Semaphore{r.transferFinishedSemaphores[currentFrame]}
+			transferSubmit := []vk.SubmitInfo{{
+				SType:                vk.StructureTypeSubmitInfo,
+				CommandBufferCount:   1,
+				PCommandBuffers:      transferCommandBuffers,
+				SignalSemaphoreCount: 1,
+				PSignalSemaphores:    transferSignalSemaphores,
+			}}
+			if r.graphicsSubmitCount > 0 {
+				previousFrame := (currentFrame + len(r.inFlightFences) - 1) % len(r.inFlightFences)
+				transferWaitSemaphores := []vk.Semaphore{r.graphicsFinishedSemaphores[previousFrame]}
+				transferWaitStages := []vk.PipelineStageFlags{vk.PipelineStageFlags(vk.PipelineStageTransferBit)}
+				transferSubmit[0].WaitSemaphoreCount = 1
+				transferSubmit[0].PWaitSemaphores = transferWaitSemaphores
+				transferSubmit[0].PWaitDstStageMask = transferWaitStages
+			}
+			var transferFence vk.Fence
+			if err := vk.Error(vk.QueueSubmit(r.transferQueue, 1, transferSubmit, transferFence)); err != nil {
+				return fmt.Errorf("submitting transfer command: %w", err)
+			}
+			waitSemaphores = append(waitSemaphores, r.transferFinishedSemaphores[currentFrame])
+			waitStages = append(waitStages, vk.PipelineStageFlags(vk.PipelineStageFragmentShaderBit))
+		}
+		signalSemaphores = append(signalSemaphores, r.graphicsFinishedSemaphores[currentFrame])
+	}
 	submitInfo := []vk.SubmitInfo{{
 		SType:                vk.StructureTypeSubmitInfo,
-		WaitSemaphoreCount:   1,
+		WaitSemaphoreCount:   uint32(len(waitSemaphores)),
 		PWaitSemaphores:      waitSemaphores,
 		PWaitDstStageMask:    waitStages,
 		CommandBufferCount:   1,
 		PCommandBuffers:      commandBuffers,
-		SignalSemaphoreCount: 1,
+		SignalSemaphoreCount: uint32(len(signalSemaphores)),
 		PSignalSemaphores:    signalSemaphores,
 	}}
 
 	if err := vk.Error(vk.QueueSubmit(r.graphicsQueue, 1, submitInfo, r.inFlightFences[currentFrame])); err != nil {
 		return fmt.Errorf("submitting draw command: %w", err)
 	}
+	if frame.transferRecorded {
+		r.lastTransferUploadCount = frame.transferUploadCount
+		r.transferQueueUploadCount += uint64(frame.transferUploadCount)
+	} else {
+		r.lastTransferUploadCount = 0
+	}
+	r.graphicsSubmitCount++
 
 	swapchains := []vk.Swapchain{r.swapchain}
 	imageIndices := []uint32{imageIndex}
+	presentWaitSemaphores := []vk.Semaphore{r.renderFinishedSemaphores[imageIndex]}
 	presentInfo := vk.PresentInfo{
 		SType:              vk.StructureTypePresentInfo,
 		WaitSemaphoreCount: 1,
-		PWaitSemaphores:    signalSemaphores,
+		PWaitSemaphores:    presentWaitSemaphores,
 		SwapchainCount:     1,
 		PSwapchains:        swapchains,
 		PImageIndices:      imageIndices,
@@ -191,17 +283,27 @@ func (r *Renderer) drawFrame(record func(*Frame) error, afterRecord func(*Frame)
 	return nil
 }
 
-func (r *Renderer) recordCommandBuffer(frameSlot int, imageIndex uint32, record func(*Frame) error, afterRecord func(*Frame) error) error {
+func (r *Renderer) recordCommandBuffer(frameSlot int, imageIndex uint32, record func(*Frame) error, afterRecord func(*Frame) error) (*Frame, error) {
 	commandBuffer := r.commandBuffers[imageIndex]
 	if err := vk.Error(vk.ResetCommandBuffer(commandBuffer, 0)); err != nil {
-		return fmt.Errorf("resetting command buffer %d: %w", imageIndex, err)
+		return nil, fmt.Errorf("resetting command buffer %d: %w", imageIndex, err)
 	}
 
 	beginInfo := vk.CommandBufferBeginInfo{
 		SType: vk.StructureTypeCommandBufferBeginInfo,
 	}
 	if err := vk.Error(vk.BeginCommandBuffer(commandBuffer, &beginInfo)); err != nil {
-		return fmt.Errorf("beginning command buffer %d: %w", imageIndex, err)
+		return nil, fmt.Errorf("beginning command buffer %d: %w", imageIndex, err)
+	}
+	transferCommandBuffer := commandBuffer
+	if r.hasDedicatedTransferQueue {
+		transferCommandBuffer = r.transferCommandBuffers[frameSlot]
+		if err := vk.Error(vk.ResetCommandBuffer(transferCommandBuffer, 0)); err != nil {
+			return nil, fmt.Errorf("resetting transfer command buffer %d: %w", frameSlot, err)
+		}
+		if err := vk.Error(vk.BeginCommandBuffer(transferCommandBuffer, &beginInfo)); err != nil {
+			return nil, fmt.Errorf("beginning transfer command buffer %d: %w", frameSlot, err)
+		}
 	}
 
 	// Reset and write BEGIN timestamp before any GPU work. The slot is
@@ -213,22 +315,23 @@ func (r *Renderer) recordCommandBuffer(frameSlot int, imageIndex uint32, record 
 	}
 
 	frame := &Frame{
-		renderer:      r,
-		CommandBuffer: commandBuffer,
-		ImageIndex:    imageIndex,
-		FrameSlot:     frameSlot,
-		Extent:        r.swapchainExtent,
+		renderer:              r,
+		CommandBuffer:         commandBuffer,
+		TransferCommandBuffer: transferCommandBuffer,
+		ImageIndex:            imageIndex,
+		FrameSlot:             frameSlot,
+		Extent:                r.swapchainExtent,
 	}
 
 	if err := record(frame); err != nil {
 		frame.EndRenderPass()
-		return err
+		return nil, err
 	}
 
 	frame.EndRenderPass()
 	if afterRecord != nil {
 		if err := afterRecord(frame); err != nil {
-			return err
+			return nil, err
 		}
 	}
 
@@ -238,8 +341,13 @@ func (r *Renderer) recordCommandBuffer(frameSlot int, imageIndex uint32, record 
 	}
 
 	if err := vk.Error(vk.EndCommandBuffer(commandBuffer)); err != nil {
-		return fmt.Errorf("ending command buffer %d: %w", imageIndex, err)
+		return nil, fmt.Errorf("ending command buffer %d: %w", imageIndex, err)
+	}
+	if r.hasDedicatedTransferQueue {
+		if err := vk.Error(vk.EndCommandBuffer(transferCommandBuffer)); err != nil {
+			return nil, fmt.Errorf("ending transfer command buffer %d: %w", frameSlot, err)
+		}
 	}
 
-	return nil
+	return frame, nil
 }

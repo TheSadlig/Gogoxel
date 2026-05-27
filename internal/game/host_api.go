@@ -267,6 +267,7 @@ func (h *Host) ResetMetricsWindow(ctx context.Context) error {
 		state.trace.recordCommand("reset_metrics_window", nil)
 		state.frameWindow.Reset()
 		state.heapAllocBaselineBytes = currentHeapTotalAllocBytes()
+		state.game.ResetTransferQueueUploadCounter()
 		return nil, nil
 	})
 	return err

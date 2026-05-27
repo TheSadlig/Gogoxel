@@ -59,6 +59,10 @@ message MetricsSnapshot {
   double p95_gpu_frame_time_ms = 22;
   uint64 gpu_frame_sample_count = 23;
   uint64 heap_alloc_delta_bytes = 24;
+  uint64 transfer_queue_uploads_window_total = 25;
+  string transfer_upload_path = 26;
+  string chunk_storage_strategy = 27;
+  string traversal_algorithm = 28;
 }
 
 message Artifact {

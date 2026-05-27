@@ -16,9 +16,12 @@ type ChunkResources struct {
 
 	device               vk.Device
 	descriptorPool       vk.DescriptorPool
+	ownsBuffer           bool
 	buffer               vk.Buffer
 	bufferMemory         vk.DeviceMemory
+	bufferOffset         vk.DeviceSize
 	bufferBytes          vk.DeviceSize
+	gigabuffer           *chunkGigabuffer
 	brickPool            *brickPool
 	ownsBrickPool        bool
 	streamer             *brickStreamer
@@ -156,13 +159,24 @@ func (r *Renderer) createChunkStorageBufferWords(chunk *ChunkResources, words []
 	if len(words) == 0 {
 		return errors.New("storage buffer data cannot be empty")
 	}
+	if chunk == nil {
+		return errors.New("chunk resources are required")
+	}
+	if isZeroValue(r.chunkGigabuffer.buffer) {
+		return errors.New("chunk gigabuffer is not initialized")
+	}
 
 	copySize := vk.DeviceSize(len(words) * 4)
 	bufferSize := growChunkStorageBufferSize(copySize)
-
-	var memoryProperties vk.PhysicalDeviceMemoryProperties
-	vk.GetPhysicalDeviceMemoryProperties(r.physicalDevice, &memoryProperties)
-	memoryProperties.Deref()
+	bufferOffset, allocSize, err := r.chunkGigabuffer.Allocate(bufferSize)
+	if err != nil {
+		return err
+	}
+	chunk.ownsBuffer = false
+	chunk.buffer = r.chunkGigabuffer.buffer
+	chunk.bufferOffset = bufferOffset
+	chunk.bufferBytes = allocSize
+	chunk.gigabuffer = &r.chunkGigabuffer
 
 	// ── Staging buffer (CPU-writable) ────────────────────────────────────────
 	stagingCreateInfo := vk.BufferCreateInfo{
@@ -184,7 +198,7 @@ func (r *Renderer) createChunkStorageBufferWords(chunk *ChunkResources, words []
 	stagingReqs.Deref()
 
 	stagingTypeIdx, err := findMemoryTypeIndex(
-		memoryProperties,
+		r.memoryProperties,
 		stagingReqs.MemoryTypeBits,
 		vk.MemoryPropertyFlags(vk.MemoryPropertyHostVisibleBit|vk.MemoryPropertyHostCoherentBit),
 	)
@@ -213,62 +227,13 @@ func (r *Renderer) createChunkStorageBufferWords(chunk *ChunkResources, words []
 	copy(unsafe.Slice((*uint32)(mapped), len(words)), words)
 	vk.UnmapMemory(r.device, stagingMemory)
 
-	// ── Device-local buffer (GPU-readable) ───────────────────────────────────
-	chunkSharingMode, chunkSharingCount, chunkSharingIndices := r.crossQueueSharing()
-	deviceCreateInfo := vk.BufferCreateInfo{
-		SType:                 vk.StructureTypeBufferCreateInfo,
-		Size:                  bufferSize,
-		Usage:                 vk.BufferUsageFlags(vk.BufferUsageStorageBufferBit | vk.BufferUsageTransferDstBit),
-		SharingMode:           chunkSharingMode,
-		QueueFamilyIndexCount: chunkSharingCount,
-		PQueueFamilyIndices:   chunkSharingIndices,
-	}
-	if err := withPinnedValue(&chunk.buffer, func() error {
-		return vk.Error(vk.CreateBuffer(r.device, &deviceCreateInfo, nil, &chunk.buffer))
-	}); err != nil {
-		return fmt.Errorf("creating device-local buffer: %w", err)
-	}
-
-	var deviceReqs vk.MemoryRequirements
-	vk.GetBufferMemoryRequirements(r.device, chunk.buffer, &deviceReqs)
-	deviceReqs.Deref()
-
-	// Prefer DEVICE_LOCAL; fall back to HOST_VISIBLE if device-local is unavailable
-	// (e.g. integrated GPU with unified memory).
-	deviceTypeIdx, err := findMemoryTypeIndex(
-		memoryProperties,
-		deviceReqs.MemoryTypeBits,
-		vk.MemoryPropertyFlags(vk.MemoryPropertyDeviceLocalBit),
-	)
-	if err != nil {
-		deviceTypeIdx, err = findMemoryTypeIndex(
-			memoryProperties,
-			deviceReqs.MemoryTypeBits,
-			vk.MemoryPropertyFlags(vk.MemoryPropertyHostVisibleBit|vk.MemoryPropertyHostCoherentBit),
-		)
-		if err != nil {
-			return fmt.Errorf("finding device-local buffer memory type: %w", err)
-		}
-	}
-
-	allocateInfo := vk.MemoryAllocateInfo{
-		SType:           vk.StructureTypeMemoryAllocateInfo,
-		AllocationSize:  deviceReqs.Size,
-		MemoryTypeIndex: deviceTypeIdx,
-	}
-	chunk.bufferBytes = bufferSize
-	if err := withPinnedValue(&chunk.bufferMemory, func() error {
-		return vk.Error(vk.AllocateMemory(r.device, &allocateInfo, nil, &chunk.bufferMemory))
-	}); err != nil {
-		return fmt.Errorf("allocating device-local memory: %w", err)
-	}
-	if err := vk.Error(vk.BindBufferMemory(r.device, chunk.buffer, chunk.bufferMemory, 0)); err != nil {
-		return fmt.Errorf("binding device-local memory: %w", err)
-	}
-
 	// ── Copy staging → device-local ──────────────────────────────────────────
 	return r.SubmitOneTimeCommands(func(cb vk.CommandBuffer) error {
-		regions := []vk.BufferCopy{{Size: copySize}}
+		regions := []vk.BufferCopy{{
+			SrcOffset: 0,
+			DstOffset: chunk.bufferOffset,
+			Size:      copySize,
+		}}
 		vk.CmdCopyBuffer(cb, stagingBuffer, chunk.buffer, 1, regions)
 		return nil
 	})
@@ -332,14 +297,15 @@ func (chunk *ChunkResources) RecordSceneUpdate(frame *Frame) error {
 			frame.renderer.deferFrameRelease(frame.FrameSlot, release)
 		}
 		copy(unsafe.Slice((*uint32)(dst), len(chunk.pendingWords)), chunk.pendingWords)
-		regions := []vk.BufferCopy{{SrcOffset: stagingOffset, DstOffset: 0, Size: size}}
-		vk.CmdCopyBuffer(frame.CommandBuffer, stagingBuffer, chunk.buffer, 1, regions)
+		regions := []vk.BufferCopy{{SrcOffset: stagingOffset, DstOffset: chunk.bufferOffset, Size: size}}
+		vk.CmdCopyBuffer(frame.TransferCommands(), stagingBuffer, chunk.buffer, 1, regions)
+		frame.RecordTransferUploads(1)
 		// The scene upload resets every brick-leaf childPtr in chunk.buffer to the
 		// CPU snapshot value (usually 0). Any later vkCmdFillBuffer pointer patch in
 		// this command buffer, including patches emitted by RecordStreaming for new
 		// bricks, must execute after this copy or edited brick regions can render as
 		// missing/stale 8x8 patches.
-		frame.renderer.recordBufferTransferBarrier(frame.CommandBuffer, chunk.buffer, chunk.bufferBytes)
+		frame.renderer.recordBufferTransferBarrier(frame.TransferCommands(), chunk.buffer, chunk.bufferOffset, chunk.bufferBytes)
 	}
 
 	if err := chunk.recordBufferWordPatches(frame, chunk.pendingWordPatches); err != nil {
@@ -363,36 +329,20 @@ func (chunk *ChunkResources) RecordSceneUpdate(frame *Frame) error {
 	}
 
 	if len(plan.uploads) > 0 {
-		frame.renderer.transitionImageLayout(
-			frame.CommandBuffer,
-			chunk.brickPool.image,
-			vk.ImageLayoutShaderReadOnlyOptimal,
-			vk.ImageLayoutTransferDstOptimal,
-			vk.AccessFlags(vk.AccessShaderReadBit),
-			vk.AccessFlags(vk.AccessTransferWriteBit),
-			vk.PipelineStageFlags(vk.PipelineStageFragmentShaderBit),
-			vk.PipelineStageFlags(vk.PipelineStageTransferBit),
-		)
+		frame.renderer.transitionChunkTransferDst(frame, chunk.brickPool.image)
 		for _, upload := range plan.uploads {
 			if err := chunk.recordBrickUpload(frame, upload.logicalIndex, upload.slot); err != nil {
 				return err
 			}
 		}
-		frame.renderer.transitionImageLayout(
-			frame.CommandBuffer,
-			chunk.brickPool.image,
-			vk.ImageLayoutTransferDstOptimal,
-			vk.ImageLayoutShaderReadOnlyOptimal,
-			vk.AccessFlags(vk.AccessTransferWriteBit),
-			vk.AccessFlags(vk.AccessShaderReadBit),
-			vk.PipelineStageFlags(vk.PipelineStageTransferBit),
-			vk.PipelineStageFlags(vk.PipelineStageFragmentShaderBit),
-		)
+		frame.renderer.transitionChunkShaderRead(frame, chunk.brickPool.image)
 	}
 	for _, patch := range plan.pointerPatches {
 		chunk.patchNodePointer(frame, patch.nodeIndex, patch.slot)
 	}
-	frame.renderer.recordBufferShaderBarrier(frame.CommandBuffer, chunk.buffer, chunk.bufferBytes)
+	if frame.TransferCommandBuffer == frame.CommandBuffer {
+		frame.renderer.recordBufferShaderBarrier(frame.CommandBuffer, chunk.buffer, chunk.bufferOffset, chunk.bufferBytes)
+	}
 
 	chunk.sceneOrigin = chunk.pendingSceneOrigin
 	chunk.pendingWords = nil
@@ -457,11 +407,12 @@ func (chunk *ChunkResources) recordBufferWordPatches(frame *Frame, patches []buf
 		values[index] = patch.value
 		regions[index] = vk.BufferCopy{
 			SrcOffset: stagingOffset + vk.DeviceSize(index*4),
-			DstOffset: patch.dstOffset,
+			DstOffset: chunk.bufferOffset + patch.dstOffset,
 			Size:      4,
 		}
 	}
-	vk.CmdCopyBuffer(frame.CommandBuffer, stagingBuffer, chunk.buffer, uint32(len(regions)), regions)
+	vk.CmdCopyBuffer(frame.TransferCommands(), stagingBuffer, chunk.buffer, uint32(len(regions)), regions)
+	frame.RecordTransferUploads(len(regions))
 	return nil
 }
 
@@ -478,8 +429,9 @@ func (chunk *ChunkResources) recordBufferWordSlice(frame *Frame, dstOffset vk.De
 		frame.renderer.deferFrameRelease(frame.FrameSlot, release)
 	}
 	copy(unsafe.Slice((*uint32)(dst), len(words)), words)
-	regions := []vk.BufferCopy{{SrcOffset: stagingOffset, DstOffset: dstOffset, Size: size}}
-	vk.CmdCopyBuffer(frame.CommandBuffer, stagingBuffer, chunk.buffer, 1, regions)
+	regions := []vk.BufferCopy{{SrcOffset: stagingOffset, DstOffset: chunk.bufferOffset + dstOffset, Size: size}}
+	vk.CmdCopyBuffer(frame.TransferCommands(), stagingBuffer, chunk.buffer, 1, regions)
+	frame.RecordTransferUploads(1)
 	return nil
 }
 
@@ -536,7 +488,7 @@ func (r *Renderer) createChunkDescriptorSet(chunkBindings *ChunkBindings, chunk 
 
 	bufferInfos := []vk.DescriptorBufferInfo{{
 		Buffer: chunk.buffer,
-		Offset: 0,
+		Offset: chunk.bufferOffset,
 		Range:  chunk.bufferBytes,
 	}}
 	imageInfos := []vk.DescriptorImageInfo{{
@@ -604,9 +556,13 @@ func (chunk *ChunkResources) Close() {
 		vk.DestroyDescriptorPool(chunk.device, chunk.descriptorPool, nil)
 	}
 	if !isZeroValue(chunk.buffer) {
-		vk.DestroyBuffer(chunk.device, chunk.buffer, nil)
+		if chunk.ownsBuffer {
+			vk.DestroyBuffer(chunk.device, chunk.buffer, nil)
+		} else if chunk.gigabuffer != nil {
+			chunk.gigabuffer.Free(chunk.bufferOffset, chunk.bufferBytes)
+		}
 	}
-	if !isZeroValue(chunk.bufferMemory) {
+	if chunk.ownsBuffer && !isZeroValue(chunk.bufferMemory) {
 		vk.FreeMemory(chunk.device, chunk.bufferMemory, nil)
 	}
 	if chunk.streamer != nil {
