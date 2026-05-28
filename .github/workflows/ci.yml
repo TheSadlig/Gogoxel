@@ -1,0 +1,114 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# Cancel in-flight runs for the same branch/PR so a fast iteration loop
+# doesn't queue up redundant CI work.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # -----------------------------------------------------------------------
+  # Cross-platform unit-test matrix.
+  # BDD jobs are intentionally kept separate (heavier, GPU-conditional).
+  # -----------------------------------------------------------------------
+  build-and-unit-test:
+    name: build+unit (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            runner: ubuntu-latest
+          - os: windows-latest
+            runner: windows-latest
+          - os: macos-latest
+            runner: macos-latest
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+          cache: true
+
+      # ---------------- platform prerequisites -----------------
+      - name: Linux Vulkan + GLFW prerequisites
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libvulkan-dev \
+            libglfw3-dev \
+            glslang-tools \
+            mesa-vulkan-drivers \
+            xorg-dev
+      - name: macOS MoltenVK + GLFW prerequisites
+        if: runner.os == 'macOS'
+        run: |
+          brew update
+          brew install glfw vulkan-headers molten-vk vulkan-loader vulkan-tools shaderc
+      - name: Windows Vulkan SDK + GLFW prerequisites
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install -y vulkan-sdk
+          # GLFW for Windows is statically linked at the cgo boundary via the
+          # binaries shipped by the go-gl/glfw module; no extra install needed.
+
+      - name: Build
+        run: go build ./...
+
+      - name: Unit tests
+        # The Vulkan-backed packages (internal/game) skip live-renderer
+        # checks when GLFW/Vulkan are unavailable; the suite runs end-to-end
+        # on every OS in pure-Go mode.
+        run: go test ./... -count=1 -timeout 15m
+
+  # -----------------------------------------------------------------------
+  # Linux-only fuzz job — short pass per PR. Nightly runs use a longer
+  # budget via workflow_dispatch from the maintainer.
+  # -----------------------------------------------------------------------
+  fuzz:
+    name: fuzz (linux, 60s/target)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+          cache: true
+      - name: Run fuzz suite
+        run: make fuzz FUZZTIME=60s
+
+  # -----------------------------------------------------------------------
+  # Linux headless BDD pass — runs without GPU using the suite's headless
+  # mode; @gpu-tagged scenarios are excluded.
+  # -----------------------------------------------------------------------
+  bdd-headless:
+    name: bdd (linux, headless)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+          cache: true
+      - name: Linux Vulkan + GLFW prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libvulkan-dev libglfw3-dev glslang-tools mesa-vulkan-drivers xorg-dev
+      - name: BDD (headless, ~@gpu)
+        run: make test-godog GODOG_TAGS='~@gpu'
