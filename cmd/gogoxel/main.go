@@ -6,6 +6,7 @@ import (
 	"flag"
 	"log"
 	"net"
+	"os"
 	"strings"
 
 	"Gogoxel/internal/automation/grpcserver"
@@ -16,6 +17,13 @@ import (
 )
 
 func main() {
+	// Subcommand dispatch — issue #7 sketches a richer command tree; the
+	// first slice ships `doctor` so CI matrix jobs (#23) can verify each
+	// runner has the necessary Vulkan/GLFW/glslang prerequisites.
+	if len(os.Args) > 1 && os.Args[1] == "doctor" {
+		os.Exit(runDoctor(os.Stdout))
+	}
+
 	automationMode := flag.Bool("automation", false, "run the engine in automation mode")
 	listenAddress := flag.String("listen", "127.0.0.1:50051", "automation gRPC listen address")
 	liveListenAddress := flag.String("automation-listen", "", "serve automation gRPC while running the engine session")
