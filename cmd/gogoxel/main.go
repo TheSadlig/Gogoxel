@@ -4,13 +4,18 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"log"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"Gogoxel/internal/automation/grpcserver"
 	"Gogoxel/internal/game"
 	"Gogoxel/internal/game/generators"
+	"Gogoxel/internal/profiler"
 
 	"google.golang.org/grpc"
 )
@@ -29,6 +34,12 @@ func main() {
 	generateChunkY := flag.Int("generate-chunk-y", 0, "chunk-space Y center for --generate-map")
 	generateChunkRange := flag.Int("generate-chunk-range", 0, "chunk-space range for --generate-map")
 	flag.Parse()
+
+	if stop, err := maybeStartProfiler(); err != nil {
+		log.Fatalf("profiler: %v", err)
+	} else if stop != nil {
+		defer stop()
+	}
 
 	if strings.TrimSpace(*generateMap) != "" {
 		if strings.TrimSpace(*chunkRoot) == "" {
@@ -114,4 +125,27 @@ func runSession(listenAddress string, options game.HostOptions) error {
 		}
 	}
 	return runErr
+}
+
+// maybeStartProfiler enables the chrome-trace profiler when GOGOXEL_TRACE
+// is set. GOGOXEL_TRACE=1 writes to ./trace-YYYYMMDD-HHMMSS.json; an
+// explicit path writes there instead. Returns a stop function to defer.
+func maybeStartProfiler() (func(), error) {
+	v := strings.TrimSpace(os.Getenv("GOGOXEL_TRACE"))
+	if v == "" || v == "0" {
+		return nil, nil
+	}
+	path := v
+	if v == "1" || v == "true" || strings.EqualFold(v, "yes") {
+		path = filepath.Join(".", fmt.Sprintf("trace-%s.json", time.Now().Format("20060102-150405")))
+	}
+	if err := profiler.Start(profiler.Options{OutputPath: path}); err != nil {
+		return nil, err
+	}
+	log.Printf("profiler: writing chrome trace to %s on exit", path)
+	return func() {
+		if err := profiler.Stop(); err != nil {
+			log.Printf("profiler: stop: %v", err)
+		}
+	}, nil
 }

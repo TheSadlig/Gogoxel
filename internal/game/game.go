@@ -8,6 +8,7 @@ import (
 	"Gogoxel/internal/engine"
 	"Gogoxel/internal/input"
 	"Gogoxel/internal/platform"
+	"Gogoxel/internal/profiler"
 	"Gogoxel/internal/vulkan"
 
 	"github.com/go-gl/glfw/v3.3/glfw"
@@ -220,11 +221,16 @@ func (g *Game) Run() error {
 }
 
 func (g *Game) StepFrame(delta time.Duration) error {
+	defer profiler.FrameMark()
+	defer profiler.Zone("StepFrame")()
 	if err := g.Update(delta); err != nil {
 		return err
 	}
 	if g.renderer != nil {
-		if err := g.renderer.DrawFrame(g.Render); err != nil {
+		endDraw := profiler.Zone("DrawFrame")
+		err := g.renderer.DrawFrame(g.Render)
+		endDraw()
+		if err != nil {
 			return err
 		}
 	}
