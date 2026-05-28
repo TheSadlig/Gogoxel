@@ -75,3 +75,12 @@ test-godog-artifacts: shaders
 
 clean:
 	rm -f $(SHADER_SPV)
+
+# Fuzz targets — run each known target for FUZZTIME (default 60s) on PRs.
+# Override with: make fuzz FUZZTIME=30m
+FUZZTIME ?= 60s
+.PHONY: fuzz
+fuzz:
+	go test -run=^$$ -fuzz=FuzzLoadStorageBufferWords -fuzztime=$(FUZZTIME) ./internal/world
+	go test -run=^$$ -fuzz=FuzzParseVOX            -fuzztime=$(FUZZTIME) ./internal/game/generators
+	go test -run=^$$ -fuzz=FuzzParseRSVO           -fuzztime=$(FUZZTIME) ./internal/game/generators
