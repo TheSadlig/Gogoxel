@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "name": "Perlin Terrain",
+  "chunk_size": 128,
+  "palette_colors": [
+    4285491040,
+    4285491040,
+    4282407284,
+    4282878042,
+    4286756297,
+    4294308590,
+    4287202171,
+    4290019147
+  ],
+  "camera_driven": true,
+  "generator_revision": "2026-05-24-terrain-v2:1:2:128:1024"
+}
