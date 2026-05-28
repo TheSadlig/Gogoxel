@@ -15,7 +15,7 @@ import (
 	vk "github.com/vulkan-go/vulkan"
 )
 
-func CreateInstance(appName, engineName string, extensions []string) (vk.Instance, error) {
+func CreateInstance(appName, engineName string, extensions []string, layers []string) (vk.Instance, error) {
 	appNamePtr := C.CString(appName)
 	defer C.free(unsafe.Pointer(appNamePtr))
 
@@ -35,6 +35,19 @@ func CreateInstance(appName, engineName string, extensions []string) (vk.Instanc
 		}
 	}
 
+	var layerNames **C.char
+	if len(layers) > 0 {
+		arraySize := C.size_t(len(layers)) * C.size_t(unsafe.Sizeof(uintptr(0)))
+		layerNames = (**C.char)(C.malloc(arraySize))
+		defer C.free(unsafe.Pointer(layerNames))
+
+		layerSlice := unsafe.Slice(layerNames, len(layers))
+		for index, layer := range layers {
+			layerSlice[index] = C.CString(layer)
+			defer C.free(unsafe.Pointer(layerSlice[index]))
+		}
+	}
+
 	appInfo := (*C.VkApplicationInfo)(C.calloc(1, C.size_t(unsafe.Sizeof(C.VkApplicationInfo{}))))
 	defer C.free(unsafe.Pointer(appInfo))
 	appInfo.sType = C.VK_STRUCTURE_TYPE_APPLICATION_INFO
@@ -50,6 +63,8 @@ func CreateInstance(appName, engineName string, extensions []string) (vk.Instanc
 	createInfo.pApplicationInfo = appInfo
 	createInfo.enabledExtensionCount = C.uint32_t(len(extensions))
 	createInfo.ppEnabledExtensionNames = extensionNames
+	createInfo.enabledLayerCount = C.uint32_t(len(layers))
+	createInfo.ppEnabledLayerNames = layerNames
 
 	var instance C.VkInstance
 	result := C.vkCreateInstance(createInfo, nil, &instance)

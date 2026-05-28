@@ -6,11 +6,13 @@ import (
 	"flag"
 	"log"
 	"net"
+	"os"
 	"strings"
 
 	"Gogoxel/internal/automation/grpcserver"
 	"Gogoxel/internal/game"
 	"Gogoxel/internal/game/generators"
+	"Gogoxel/internal/vulkan"
 
 	"google.golang.org/grpc"
 )
@@ -28,7 +30,12 @@ func main() {
 	generateChunkX := flag.Int("generate-chunk-x", 0, "chunk-space X center for --generate-map")
 	generateChunkY := flag.Int("generate-chunk-y", 0, "chunk-space Y center for --generate-map")
 	generateChunkRange := flag.Int("generate-chunk-range", 0, "chunk-space range for --generate-map")
+	validate := flag.Bool("validate", false, "enable Vulkan validation layers (VK_LAYER_KHRONOS_validation + VK_EXT_debug_utils)")
 	flag.Parse()
+
+	if *validate || isTruthyEnv(os.Getenv("GOGOXEL_VALIDATE")) {
+		vulkan.EnableValidationLayers()
+	}
 
 	if strings.TrimSpace(*generateMap) != "" {
 		if strings.TrimSpace(*chunkRoot) == "" {
@@ -114,4 +121,14 @@ func runSession(listenAddress string, options game.HostOptions) error {
 		}
 	}
 	return runErr
+}
+
+// isTruthyEnv returns true for "1", "true", "yes" (case-insensitive). Used
+// to honor GOGOXEL_VALIDATE=1 / GOGOXEL_TRACE=1 style flags.
+func isTruthyEnv(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
 }

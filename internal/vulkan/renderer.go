@@ -3,8 +3,11 @@ package vulkan
 import (
 	"errors"
 	"fmt"
+	"log/slog"
+	"os"
 	"runtime"
 	"strings"
+	"sync"
 
 	"Gogoxel/internal/platform"
 	"Gogoxel/internal/vulkan/vkbridge"
@@ -87,10 +90,28 @@ type Renderer struct {
 	gpuTimestamps *gpuTimestamps
 
 	instanceExtensions []string
+	instanceLayers     []string
+	validationEnabled  bool
 	physicalDeviceName string
 	timestampPeriodNs  float32
 	presentMode        vk.PresentMode
 	captureSupported   bool
+}
+
+// ValidationConfig is the cross-package signal for enabling Vulkan
+// validation layers. It is intentionally a process-wide value because the
+// renderer is created without an Options argument today.
+var (
+	validationOnce    sync.Once
+	validationDesired bool
+)
+
+// EnableValidationLayers requests VK_LAYER_KHRONOS_validation +
+// VK_EXT_debug_utils on subsequent renderer instances. Must be called
+// before vulkan.New().
+func EnableValidationLayers() {
+	validationOnce.Do(func() {})
+	validationDesired = true
 }
 
 func New(window *platform.Window) (*Renderer, error) {
@@ -102,6 +123,18 @@ func New(window *platform.Window) (*Renderer, error) {
 	renderer.instanceExtensions = window.RequiredInstanceExtensions()
 	if len(renderer.instanceExtensions) == 0 {
 		return nil, errors.New("GLFW did not provide required Vulkan instance extensions")
+	}
+	if validationDesired {
+		renderer.validationEnabled = true
+		renderer.instanceLayers = append(renderer.instanceLayers, "VK_LAYER_KHRONOS_validation")
+		// VK_EXT_debug_utils is the modern unified messenger extension.
+		// The loader silently no-ops it if the layer isn't installed,
+		// which keeps --validate a soft request.
+		renderer.instanceExtensions = append(renderer.instanceExtensions, "VK_EXT_debug_utils")
+		validationLogger().LogAttrs(nil, slog.LevelInfo, "vulkan validation layers requested",
+			slog.String("layer", "VK_LAYER_KHRONOS_validation"),
+			slog.String("extension", "VK_EXT_debug_utils"),
+		)
 	}
 
 	if err := renderer.initVulkan(); err != nil {
@@ -176,7 +209,7 @@ func (r *Renderer) initVulkan() error {
 }
 
 func (r *Renderer) createInstance() error {
-	instance, err := vkbridge.CreateInstance("Gogoxel", "Gogoxel", r.instanceExtensions)
+	instance, err := vkbridge.CreateInstance("Gogoxel", "Gogoxel", r.instanceExtensions, r.instanceLayers)
 	if err != nil {
 		return err
 	}
@@ -244,6 +277,13 @@ func (r *Renderer) pickPhysicalDevice() error {
 	}
 
 	return errors.New("no physical device supports graphics, presentation, and swapchains")
+}
+
+// validationLogger returns a stderr slog logger tagged for vulkan
+// validation messages. It is intentionally self-contained so this branch
+// doesn't depend on internal/log landing first.
+func validationLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})).With(slog.String("component", "vulkan"))
 }
 
 func (r *Renderer) createLogicalDevice() error {
