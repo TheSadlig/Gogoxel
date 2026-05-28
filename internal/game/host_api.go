@@ -118,7 +118,7 @@ func (h *Host) SetSelectedMaterial(ctx context.Context, name string) error {
 // SetOnEdit registers a per-edit callback through the owner-thread
 // request path. The callback runs on the game-host owner thread; it
 // must not block. Pass nil to clear.
-func (h *Host) SetOnEdit(ctx context.Context, fn func(engine.EditResult)) error {
+func (h *Host) SetOnEdit(ctx context.Context, fn func(engine.EditMode, engine.EditResult)) error {
 	_, err := h.invoke(ctx, func(_ context.Context, state *sessionState) (any, error) {
 		state.game.SetOnEdit(fn)
 		return nil, nil

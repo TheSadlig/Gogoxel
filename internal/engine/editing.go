@@ -161,7 +161,7 @@ func (c *Core) applyCursorEditSamples(mode EditMode, samples []cursorEditSample,
 			runtime.GC()
 		}
 		if c.onEdit != nil {
-			c.onEdit(result)
+			c.onEdit(mode, result)
 		}
 	}
 	return result, nil

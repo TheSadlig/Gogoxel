@@ -6,11 +6,11 @@ import (
 	"testing"
 )
 
-func TestPrintBriefingMentionsObjective(t *testing.T) {
+func TestPrintBriefingMentionsMinecraft(t *testing.T) {
 	var buf bytes.Buffer
 	printBriefing(&buf)
-	for _, w := range []string{"Build the Beacon", "Objective", "WASD"} {
-		if !strings.Contains(buf.String(), w) {
+	for _, w := range []string{"Minecraft", "perlin", "mine", "play"} {
+		if !strings.Contains(strings.ToLower(buf.String()), strings.ToLower(w)) {
 			t.Fatalf("briefing missing %q\n%s", w, buf.String())
 		}
 	}

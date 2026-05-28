@@ -63,13 +63,13 @@ type Core struct {
 	tickDuration          time.Duration
 	selectedEditMaterial  int
 	placeStroke           continuousEditState
-	onEdit                func(EditResult)
+	onEdit                func(EditMode, EditResult)
 }
 
 // SetOnEdit registers a callback fired after every successful voxel
 // edit (place or remove). Used by the gameplay layer (e.g. cmd/gogoxel
 // demo) to detect when objective targets are hit. Pass nil to clear.
-func (c *Core) SetOnEdit(fn func(EditResult)) {
+func (c *Core) SetOnEdit(fn func(EditMode, EditResult)) {
 	if c == nil {
 		return
 	}
