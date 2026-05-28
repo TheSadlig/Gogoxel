@@ -45,6 +45,12 @@ type Game struct {
 	bindings           *vulkan.ChunkBindings
 	raytracer          *vulkan.RaytracerPipeline
 	loadedSceneVersion uint64
+
+	mouseLookEnabled   bool
+	mouseLookSeeded    bool
+	mouseLookLastX     float64
+	mouseLookLastY     float64
+	mouseLookSensDeg   float32 // degrees per pixel
 }
 
 func New(options Options) *Game {
@@ -345,6 +351,23 @@ func (g *Game) SetSelectedEditMaterial(name string) error {
 	return g.core.SetSelectedEditMaterial(name)
 }
 
+// SetMouseLook enables/disables FPS mouse-look. When enabled the
+// cursor is captured by the window and per-frame cursor deltas drive
+// the camera yaw/pitch. Safe to call from the host owner thread.
+func (g *Game) SetMouseLook(enabled bool) {
+	if g == nil {
+		return
+	}
+	g.mouseLookEnabled = enabled
+	g.mouseLookSeeded = false
+	if g.mouseLookSensDeg == 0 {
+		g.mouseLookSensDeg = 0.12
+	}
+	if g.window != nil {
+		g.window.SetCursorCaptured(enabled)
+	}
+}
+
 // SetOnEdit registers a per-edit callback. See engine.Core.SetOnEdit.
 func (g *Game) SetOnEdit(fn func(engine.EditMode, engine.EditResult)) {
 	if g == nil {
@@ -493,6 +516,18 @@ func (g *Game) Update(delta time.Duration) error {
 	g.core.SetCursorSample(cursorSample(g.window))
 	keyboardSnapshotInto(g.keyboardScratch, g.window)
 	mouseSnapshotInto(g.mouseScratch, g.window)
+	if g.mouseLookEnabled && g.window != nil {
+		x, y := g.window.CursorPosition()
+		if g.mouseLookSeeded {
+			dx := float32(x - g.mouseLookLastX)
+			dy := float32(y - g.mouseLookLastY)
+			// Yaw: +x mouse = look right; Pitch: +y mouse = look down.
+			g.core.AddMouseLook(-dx*g.mouseLookSensDeg, -dy*g.mouseLookSensDeg)
+		} else {
+			g.mouseLookSeeded = true
+		}
+		g.mouseLookLastX, g.mouseLookLastY = x, y
+	}
 	mergedHeldInto(g.mergedHeld, g.keyboardScratch, g.mouseScratch, g.externalHeldActions)
 	g.core.SetHeldActions(g.mergedHeld)
 	if err := g.core.Step(delta); err != nil {

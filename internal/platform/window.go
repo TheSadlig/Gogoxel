@@ -103,6 +103,21 @@ func (w *Window) CursorPosition() (float64, float64) {
 	return w.handle.GetCursorPos()
 }
 
+// SetCursorCaptured switches the cursor between visible/free and
+// hidden/locked (FPS mode). When captured, glfw reports unbounded
+// cursor coordinates so callers should drive mouse-look from per-
+// frame deltas rather than absolute positions.
+func (w *Window) SetCursorCaptured(captured bool) {
+	if w.handle == nil {
+		return
+	}
+	if captured {
+		w.handle.SetInputMode(glfw.CursorMode, glfw.CursorDisabled)
+	} else {
+		w.handle.SetInputMode(glfw.CursorMode, glfw.CursorNormal)
+	}
+}
+
 func (w *Window) Size() (int, int) {
 	if w.handle == nil {
 		return 0, 0

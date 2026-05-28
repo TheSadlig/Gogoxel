@@ -115,6 +115,16 @@ func (h *Host) SetSelectedMaterial(ctx context.Context, name string) error {
 	return err
 }
 
+// SetMouseLook toggles FPS-style mouse-look + cursor capture through
+// the owner-thread request path.
+func (h *Host) SetMouseLook(ctx context.Context, enabled bool) error {
+	_, err := h.invoke(ctx, func(_ context.Context, state *sessionState) (any, error) {
+		state.game.SetMouseLook(enabled)
+		return nil, nil
+	})
+	return err
+}
+
 // SetOnEdit registers a per-edit callback through the owner-thread
 // request path. The callback runs on the game-host owner thread; it
 // must not block. Pass nil to clear.

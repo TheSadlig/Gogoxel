@@ -64,6 +64,19 @@ type Core struct {
 	selectedEditMaterial  int
 	placeStroke           continuousEditState
 	onEdit                func(EditMode, EditResult)
+	pendingMouseYaw       float32
+	pendingMousePitch     float32
+}
+
+// AddMouseLook accumulates a yaw/pitch delta (in degrees) to be
+// applied on the next Step. Used by FPS-style adapters to drive the
+// camera from mouse motion.
+func (c *Core) AddMouseLook(yawDeg, pitchDeg float32) {
+	if c == nil {
+		return
+	}
+	c.pendingMouseYaw += yawDeg
+	c.pendingMousePitch += pitchDeg
 }
 
 // SetOnEdit registers a callback fired after every successful voxel
@@ -517,6 +530,14 @@ func (c *Core) advanceCamera(delta time.Duration) error {
 	}
 	if c.input.Down(control.ActionTurnLeft) {
 		c.camera.PitchDeg += turnStep
+	}
+	// Apply pending mouse-look delta (from cmd/gogoxel demo or other
+	// FPS-style adapters). One-shot consumed.
+	if c.pendingMouseYaw != 0 || c.pendingMousePitch != 0 {
+		c.camera.YawDeg += c.pendingMouseYaw
+		c.camera.PitchDeg += c.pendingMousePitch
+		c.pendingMouseYaw = 0
+		c.pendingMousePitch = 0
 	}
 	c.clampCamera()
 	if c.camera == previousCamera {

@@ -102,7 +102,7 @@ func runDemo(out io.Writer) int {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Per-edit hook + periodic activity print.
+	// Per-edit hook + periodic activity print + enable mouse-look.
 	go func() {
 		deadline := time.Now().Add(30 * time.Second)
 		for time.Now().Before(deadline) {
@@ -114,6 +114,9 @@ func runDemo(out io.Writer) int {
 				return
 			case <-time.After(200 * time.Millisecond):
 			}
+		}
+		if !*headless && !*autoplay {
+			_ = host.SetMouseLook(ctx, true)
 		}
 		tick := time.NewTicker(3 * time.Second)
 		defer tick.Stop()
@@ -156,9 +159,15 @@ func printBriefing(out io.Writer) {
 	fmt.Fprintln(out, "=============================================")
 	fmt.Fprintln(out, " GOGOXEL — tiny Minecraft-like clone")
 	fmt.Fprintln(out, "=============================================")
-	fmt.Fprintln(out, "  • You spawn on a small perlin-generated island.")
-	fmt.Fprintln(out, "  • Walk around, mine blocks, build whatever you want.")
-	fmt.Fprintln(out, "  • There is no objective and no timer — just play.")
+	fmt.Fprintln(out, "  Controls:")
+	fmt.Fprintln(out, "    WASD      — walk")
+	fmt.Fprintln(out, "    Mouse     — look around (cursor is captured)")
+	fmt.Fprintln(out, "    Q / E     — fly up / down")
+	fmt.Fprintln(out, "    Shift     — sprint")
+	fmt.Fprintln(out, "    Left clk  — place block")
+	fmt.Fprintln(out, "    Right clk — mine block")
+	fmt.Fprintln(out, "    [ / ]     — previous / next material")
+	fmt.Fprintln(out, "    Close window to quit")
 	fmt.Fprintln(out, "=============================================")
 }
 
