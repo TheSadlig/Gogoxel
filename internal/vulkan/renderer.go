@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"strings"
 
+	"Gogoxel/internal/log"
 	"Gogoxel/internal/platform"
 	"Gogoxel/internal/vulkan/vkbridge"
 
@@ -239,7 +240,10 @@ func (r *Renderer) pickPhysicalDevice() error {
 		r.storageBufferOffsetAlignment = vk.DeviceSize(props.Limits.MinStorageBufferOffsetAlignment)
 		vk.GetPhysicalDeviceMemoryProperties(device, &r.memoryProperties)
 		r.memoryProperties.Deref()
-		fmt.Printf("[vulkan] physical device: %s (timestamp period: %.2f ns)\n", r.physicalDeviceName, r.timestampPeriodNs)
+		log.WithComponent("vulkan").Info("physical device selected",
+			"device", r.physicalDeviceName,
+			"timestamp_period_ns", r.timestampPeriodNs,
+		)
 		return nil
 	}
 
@@ -305,7 +309,10 @@ func (r *Renderer) createSwapchain() error {
 		return err
 	}
 	extent := r.chooseExtent(support.capabilities)
-	fmt.Printf("[vulkan] present mode: %s (available: %s)\n", presentModeName(presentMode), strings.Join(presentModeNames(support.presentModes), ", "))
+	log.WithComponent("vulkan").Info("swapchain present mode",
+		"chosen", presentModeName(presentMode),
+		"available", strings.Join(presentModeNames(support.presentModes), ","),
+	)
 
 	imageCount := support.capabilities.MinImageCount + 1
 	if support.capabilities.MaxImageCount > 0 && imageCount > support.capabilities.MaxImageCount {

@@ -160,14 +160,14 @@ func (g *Game) Close() error {
 
 func (g *Game) InitChunk() error {
 	if g.renderer == nil {
-		return fmt.Errorf("renderer is not initialized")
+		return engine.ErrRendererNotInitialized
 	}
 	if g.bindings == nil {
 		return fmt.Errorf("chunk bindings are not initialized")
 	}
 	currentSVO := g.core.CurrentSVO()
 	if currentSVO == nil {
-		return fmt.Errorf("no scene is loaded")
+		return engine.ErrNoSceneLoaded
 	}
 
 	nextChunk, err := g.renderer.CreateChunkResourcesFromSVO(g.bindings, currentSVO, g.core.SceneWorldOrigin())
@@ -473,10 +473,10 @@ func (g *Game) LastGPUFrameMs() float64 {
 
 func (g *Game) CaptureScreenshot(path string) error {
 	if g.renderer == nil {
-		return fmt.Errorf("renderer is not initialized")
+		return engine.ErrRendererNotInitialized
 	}
 	if g.core.CurrentSVO() == nil {
-		return fmt.Errorf("no scene is loaded")
+		return engine.ErrNoSceneLoaded
 	}
 	return g.renderer.CaptureFramePNG(g.Render, path)
 }

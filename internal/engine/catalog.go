@@ -84,7 +84,7 @@ func (c *GeneratorCatalog) Build(name string, request generators.BuildRequest) (
 	}
 	item, ok := c.byName[name]
 	if !ok {
-		return nil, 0, fmt.Errorf("unknown generator %q", name)
+		return nil, 0, fmt.Errorf("%w %q", ErrUnknownGenerator, name)
 	}
 	svo := world.NewSVO()
 	if err := item.BuildSVO(svo, request); err != nil {
