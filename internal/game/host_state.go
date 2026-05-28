@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"Gogoxel/internal/engine"
 	"Gogoxel/internal/session"
 )
 
@@ -55,7 +56,7 @@ func (s *sessionState) close() error {
 
 func (s *sessionState) step(ctx context.Context, count int) (session.StepResult, error) {
 	if count < 0 {
-		return session.StepResult{}, fmt.Errorf("step count must be non-negative")
+		return session.StepResult{}, engine.ErrInvalidStepCount
 	}
 	for index := 0; index < count; index++ {
 		select {
@@ -119,7 +120,7 @@ func (s *sessionState) waitUntilReady(ctx context.Context, criteria session.Wait
 			return session.Readiness{}, err
 		}
 	}
-	return s.readiness(), fmt.Errorf("readiness criteria were not met after %d ticks", maxTicks)
+	return s.readiness(), fmt.Errorf("%w after %d ticks", engine.ErrReadinessNotMet, maxTicks)
 }
 
 func (s *sessionState) readiness() session.Readiness {

@@ -166,7 +166,7 @@ func (c *Core) lookupGenerator(name string) (generators.Generator, error) {
 	}
 	item, ok := c.catalog.Lookup(name)
 	if !ok {
-		return nil, fmt.Errorf("unknown generator %q", name)
+		return nil, fmt.Errorf("%w %q", ErrUnknownGenerator, name)
 	}
 	return item, nil
 }

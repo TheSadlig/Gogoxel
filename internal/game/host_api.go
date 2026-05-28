@@ -80,7 +80,7 @@ func (h *Host) GetCamera(ctx context.Context) (platform.Camera, error) {
 func (h *Host) SetTickRate(ctx context.Context, tickRateHz int) error {
 	_, err := h.invoke(ctx, func(_ context.Context, state *sessionState) (any, error) {
 		if tickRateHz <= 0 {
-			return nil, fmt.Errorf("tick rate must be positive")
+			return nil, engine.ErrInvalidTickRate
 		}
 		state.trace.recordCommand("set_tick_rate", map[string]any{"tick_rate_hz": tickRateHz})
 		state.game.SetTickRateHz(tickRateHz)
@@ -146,14 +146,14 @@ func (h *Host) EditAtCursor(ctx context.Context, mode session.EditMode, cursor s
 func (h *Host) ClickUI(ctx context.Context, logicalID string) error {
 	_, err := h.invoke(ctx, func(_ context.Context, state *sessionState) (any, error) {
 		state.trace.recordCommand("click_ui", map[string]any{"logical_id": logicalID})
-		return nil, fmt.Errorf("ui automation is not implemented")
+		return nil, engine.ErrUIAutomationUnsupported
 	})
 	return err
 }
 
 func (h *Host) StepTicks(ctx context.Context, ticks int) (session.StepResult, error) {
 	if h.options.Live {
-		return session.StepResult{}, fmt.Errorf("manual stepping requires manual automation mode")
+		return session.StepResult{}, engine.ErrManualStepUnavailable
 	}
 	value, err := h.invoke(ctx, func(callCtx context.Context, state *sessionState) (any, error) {
 		state.trace.recordCommand("step_ticks", map[string]any{"ticks": ticks})
@@ -167,7 +167,7 @@ func (h *Host) StepTicks(ctx context.Context, ticks int) (session.StepResult, er
 
 func (h *Host) StepFrames(ctx context.Context, frames int) (session.StepResult, error) {
 	if h.options.Live {
-		return session.StepResult{}, fmt.Errorf("manual stepping requires manual automation mode")
+		return session.StepResult{}, engine.ErrManualStepUnavailable
 	}
 	value, err := h.invoke(ctx, func(callCtx context.Context, state *sessionState) (any, error) {
 		state.trace.recordCommand("step_frames", map[string]any{"frames": frames})
@@ -232,7 +232,7 @@ func (h *Host) waitUntilReadyLive(ctx context.Context, criteria session.WaitCrit
 		readiness, err := h.GetReadiness(deadlineCtx)
 		if err != nil {
 			if errors.Is(err, context.DeadlineExceeded) {
-				return lastReadiness, fmt.Errorf("readiness criteria were not met after %d ticks", maxTicks)
+				return lastReadiness, fmt.Errorf("%w after %d ticks", engine.ErrReadinessNotMet, maxTicks)
 			}
 			return session.Readiness{}, err
 		}
@@ -243,7 +243,7 @@ func (h *Host) waitUntilReadyLive(ctx context.Context, criteria session.WaitCrit
 		select {
 		case <-deadlineCtx.Done():
 			if errors.Is(deadlineCtx.Err(), context.DeadlineExceeded) {
-				return lastReadiness, fmt.Errorf("readiness criteria were not met after %d ticks", maxTicks)
+				return lastReadiness, fmt.Errorf("%w after %d ticks", engine.ErrReadinessNotMet, maxTicks)
 			}
 			return session.Readiness{}, deadlineCtx.Err()
 		case <-ticker.C:

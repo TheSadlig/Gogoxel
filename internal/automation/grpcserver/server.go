@@ -8,6 +8,7 @@ import (
 
 	automationpb "Gogoxel/internal/automation/pb"
 	"Gogoxel/internal/control"
+	"Gogoxel/internal/engine"
 	"Gogoxel/internal/input"
 	"Gogoxel/internal/platform"
 	"Gogoxel/internal/session"
@@ -399,31 +400,31 @@ func statusError(err error, metadata map[string]string) error {
 	code := codes.Internal
 	message := err.Error()
 	switch {
-	case strings.Contains(message, "unknown generator"):
+	case errors.Is(err, engine.ErrUnknownGenerator):
 		reason = "scene_source_not_found"
 		code = codes.NotFound
-	case strings.Contains(message, "ui automation is not implemented"):
+	case errors.Is(err, engine.ErrUIAutomationUnsupported):
 		reason = "ui_automation_unimplemented"
 		code = codes.Unimplemented
-	case strings.Contains(message, "screenshot capture is not implemented"):
+	case errors.Is(err, engine.ErrScreenshotUnsupported):
 		reason = "screenshot_unimplemented"
 		code = codes.Unimplemented
-	case strings.Contains(message, "renderer is not initialized"):
+	case errors.Is(err, engine.ErrRendererNotInitialized):
 		reason = "renderer_not_initialized"
 		code = codes.FailedPrecondition
-	case strings.Contains(message, "no scene is loaded"):
+	case errors.Is(err, engine.ErrNoSceneLoaded):
 		reason = "scene_not_loaded"
 		code = codes.FailedPrecondition
-	case strings.Contains(message, "readiness criteria were not met"):
+	case errors.Is(err, engine.ErrReadinessNotMet):
 		reason = "readiness_not_met"
 		code = codes.FailedPrecondition
-	case strings.Contains(message, "step count must be non-negative"):
+	case errors.Is(err, engine.ErrInvalidStepCount):
 		reason = "invalid_step_count"
 		code = codes.InvalidArgument
-	case strings.Contains(message, "manual stepping requires manual automation mode"):
+	case errors.Is(err, engine.ErrManualStepUnavailable):
 		reason = "manual_step_unavailable"
 		code = codes.FailedPrecondition
-	case strings.Contains(message, "tick rate must be positive"):
+	case errors.Is(err, engine.ErrInvalidTickRate):
 		reason = "invalid_tick_rate"
 		code = codes.InvalidArgument
 	}

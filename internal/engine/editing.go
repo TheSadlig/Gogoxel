@@ -118,7 +118,7 @@ func (c *Core) applyCursorEditSamples(mode EditMode, samples []cursorEditSample,
 		return EditResult{}, fmt.Errorf("engine core is not initialized")
 	}
 	if c.svo == nil {
-		return EditResult{}, fmt.Errorf("no scene is loaded")
+		return EditResult{}, ErrNoSceneLoaded
 	}
 	if raycastSVO == nil {
 		raycastSVO = c.svo
@@ -169,7 +169,7 @@ func (c *Core) resolveCursorEditTarget(mode EditMode, sample cursorEditSample, r
 		return resolvedCursorEditTarget{}, fmt.Errorf("engine core is not initialized")
 	}
 	if c.svo == nil {
-		return resolvedCursorEditTarget{}, fmt.Errorf("no scene is loaded")
+		return resolvedCursorEditTarget{}, ErrNoSceneLoaded
 	}
 	if raycastSVO == nil {
 		raycastSVO = c.svo
