@@ -28,6 +28,9 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "doctor" {
 		os.Exit(runDoctor(os.Stdout))
 	}
+	if len(os.Args) > 1 && os.Args[1] == "demo" {
+		os.Exit(runDemo(os.Stdout))
+	}
 
 	automationMode := flag.Bool("automation", false, "run the engine in automation mode")
 	listenAddress := flag.String("listen", "127.0.0.1:50051", "automation gRPC listen address")
