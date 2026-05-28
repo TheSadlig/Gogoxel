@@ -6,13 +6,12 @@ import (
 	"testing"
 )
 
-func TestRunDemoWins(t *testing.T) {
+func TestPrintBriefingMentionsObjective(t *testing.T) {
 	var buf bytes.Buffer
-	code := runDemo(&buf)
-	if code != 0 {
-		t.Fatalf("runDemo exit = %d, want 0\noutput:\n%s", code, buf.String())
-	}
-	if !strings.Contains(buf.String(), "win") {
-		t.Fatalf("expected 'win' in output, got:\n%s", buf.String())
+	printBriefing(&buf)
+	for _, w := range []string{"Build the Beacon", "Objective", "WASD"} {
+		if !strings.Contains(buf.String(), w) {
+			t.Fatalf("briefing missing %q\n%s", w, buf.String())
+		}
 	}
 }

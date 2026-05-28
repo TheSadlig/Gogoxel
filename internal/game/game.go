@@ -345,6 +345,14 @@ func (g *Game) SetSelectedEditMaterial(name string) error {
 	return g.core.SetSelectedEditMaterial(name)
 }
 
+// SetOnEdit registers a per-edit callback. See engine.Core.SetOnEdit.
+func (g *Game) SetOnEdit(fn func(engine.EditResult)) {
+	if g == nil {
+		return
+	}
+	g.core.SetOnEdit(fn)
+}
+
 func (g *Game) SelectedEditMaterialName() string {
 	if g == nil {
 		return ""

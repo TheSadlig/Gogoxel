@@ -160,6 +160,9 @@ func (c *Core) applyCursorEditSamples(mode EditMode, samples []cursorEditSample,
 		if c.svo.LastEditUsedFullRebuild() {
 			runtime.GC()
 		}
+		if c.onEdit != nil {
+			c.onEdit(result)
+		}
 	}
 	return result, nil
 }
